@@ -1,0 +1,988 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ゆっくりNEWS</title>
+<meta name="description" content="実在のRSSから収集した記事を表示するニュースキュレーションアプリ（非AI版）">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@400;600;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  :root{
+    --bg:#eae5d8;
+    --frame-bg:#fbfaf5;
+    --surface:#ffffff;
+    --surface-2:#f1eee3;
+    --ink:#23262b;
+    --ink-soft:#565c66;
+    --muted:#8b8f95;
+    --line:#e3dfd2;
+    --accent:#2d6e71;
+    --accent-strong:#1f4f52;
+    --accent-ink:#fbfaf5;
+    --accent-soft:#dbeae7;
+    --gold:#b97a2e;
+    --gold-soft:#f2e2c8;
+    --gold-ink:#3a2a10;
+    --danger:#a8483c;
+    --danger-soft:#f3ddd8;
+    --shadow:rgba(30,32,28,0.24);
+    color-scheme:light;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#111315;
+      --frame-bg:#1b1e21;
+      --surface:#212528;
+      --surface-2:#282c30;
+      --ink:#eeece5;
+      --ink-soft:#b7bcc3;
+      --muted:#7d838b;
+      --line:#34383d;
+      --accent:#5aafa9;
+      --accent-strong:#7fc4bf;
+      --accent-ink:#0d1413;
+      --accent-soft:#233735;
+      --gold:#dba762;
+      --gold-soft:#3a2e1a;
+      --gold-ink:#f6e3c4;
+      --danger:#e0897c;
+      --danger-soft:#3a2521;
+      --shadow:rgba(0,0,0,0.55);
+      color-scheme:dark;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#111315;
+    --frame-bg:#1b1e21;
+    --surface:#212528;
+    --surface-2:#282c30;
+    --ink:#eeece5;
+    --ink-soft:#b7bcc3;
+    --muted:#7d838b;
+    --line:#34383d;
+    --accent:#5aafa9;
+    --accent-strong:#7fc4bf;
+    --accent-ink:#0d1413;
+    --accent-soft:#233735;
+    --gold:#dba762;
+    --gold-soft:#3a2e1a;
+    --gold-ink:#f6e3c4;
+    --danger:#e0897c;
+    --danger-soft:#3a2521;
+    --shadow:rgba(0,0,0,0.55);
+    color-scheme:dark;
+  }
+
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:
+      radial-gradient(circle at 20% 8%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 55%),
+      radial-gradient(circle at 85% 92%, color-mix(in srgb, var(--gold) 8%, transparent), transparent 50%),
+      var(--bg);
+    color:var(--ink);
+    font-family:'Zen Kaku Gothic New', 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+    min-height:100vh;
+    min-height:100dvh;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:28px 16px;
+  }
+  h1,h2,h3{font-family:'Shippori Mincho', serif; margin:0; text-wrap:balance;}
+  button{font-family:inherit;}
+  .num{font-family:'JetBrains Mono', ui-monospace, monospace; font-variant-numeric:tabular-nums;}
+
+  a{color:inherit;}
+  :focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
+
+  /* ---------- stage / phone frame ---------- */
+  .stage{display:flex; flex-direction:column; align-items:center; gap:14px;}
+  .masthead{
+    display:flex; align-items:baseline; gap:10px; color:var(--ink-soft);
+    font-size:12.5px; letter-spacing:.06em;
+  }
+  .masthead b{font-family:'Shippori Mincho',serif; color:var(--ink); font-size:15px; letter-spacing:.02em;}
+
+  .phone{
+    position:relative;
+    width:400px; max-width:100vw;
+    height:844px; max-height:min(860px,94dvh);
+    background:var(--frame-bg);
+    border-radius:38px;
+    box-shadow:0 30px 60px -20px var(--shadow), 0 2px 0 color-mix(in srgb, var(--ink) 6%, transparent) inset;
+    border:1px solid color-mix(in srgb, var(--ink) 10%, transparent);
+    overflow:hidden;
+    display:flex; flex-direction:column;
+  }
+  @media (max-width:480px){
+    body{padding:0;}
+    .masthead{display:none;}
+    .stage{gap:0; width:100%;}
+    .phone{width:100vw; height:100dvh; max-height:100dvh; border-radius:0; border:none;}
+  }
+
+  .statusbar{
+    flex:0 0 auto; height:34px; padding:0 20px;
+    display:flex; align-items:center; justify-content:space-between;
+    font-size:12px; color:var(--ink-soft);
+  }
+  .statusbar .clock{font-family:'JetBrains Mono',monospace; font-variant-numeric:tabular-nums; color:var(--ink);}
+
+  .screens{position:relative; flex:1 1 auto; min-height:0; overflow:hidden;}
+  .screen{
+    position:absolute; inset:0; display:flex; flex-direction:column; min-height:0;
+    background:var(--frame-bg);
+    opacity:0; visibility:hidden; transform:translateY(6px);
+    transition:opacity .22s ease, transform .22s ease;
+  }
+  .screen.active{opacity:1; visibility:visible; transform:none;}
+  @media (prefers-reduced-motion:reduce){ .screen{transition:none;} }
+
+  .screen-head{
+    flex:0 0 auto; padding:14px 20px 12px; border-bottom:1px solid var(--line);
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+  }
+  .screen-head h2{font-size:20px; color:var(--ink);}
+  .head-btn{
+    appearance:none; border:none; background:var(--surface-2); color:var(--ink-soft);
+    width:34px; height:34px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+    cursor:pointer; font-size:15px; transition:background .15s ease, color .15s ease;
+  }
+  .head-btn:hover{background:var(--accent-soft); color:var(--accent-strong);}
+
+  .screen-body{flex:1 1 auto; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:14px 16px 130px;}
+  .screen-body::-webkit-scrollbar{width:0;}
+
+  .next-run{
+    margin:0 20px 10px; padding:9px 12px; border-radius:12px;
+    background:var(--surface-2); color:var(--ink-soft); font-size:11.5px;
+    display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;
+  }
+  .next-run .val{color:var(--accent-strong); font-weight:500;}
+
+  /* ---------- feed cards ---------- */
+  .card{
+    background:var(--surface); border:1px solid var(--line); border-radius:16px;
+    padding:12px; margin-bottom:12px; display:flex; gap:12px;
+    box-shadow:0 1px 0 color-mix(in srgb, var(--ink) 3%, transparent);
+  }
+  .card .thumb{
+    flex:0 0 auto; width:78px; height:78px; border-radius:12px; overflow:hidden;
+    background:var(--surface-2);
+  }
+  .card .thumb img{width:100%; height:100%; display:block; object-fit:cover;}
+  .card .body{min-width:0; flex:1; display:flex; flex-direction:column; gap:5px;}
+  .card .src{font-size:11px; color:var(--accent-strong); font-weight:500; display:flex; gap:6px; align-items:center;}
+  .card .src .dot{width:4px; height:4px; border-radius:50%; background:var(--muted);}
+  .card .title{font-size:15px; line-height:1.42; color:var(--ink); font-weight:500;}
+  .badge{
+    display:inline-flex; align-items:center; font-size:9.5px; padding:1px 6px; border-radius:999px;
+    background:var(--gold-soft); color:var(--gold-ink); margin-left:5px; font-weight:700; letter-spacing:.02em; vertical-align:1px;
+  }
+  .badge.warn{background:var(--danger-soft); color:var(--danger);}
+  .card .summary{
+    font-size:12.5px; color:var(--ink-soft); line-height:1.55;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+  }
+  .card .foot{display:flex; align-items:center; justify-content:space-between; margin-top:2px;}
+  .card .posted{font-size:11px; color:var(--muted);}
+  .detail-btn{
+    appearance:none; border:1px solid var(--accent); background:transparent; color:var(--accent-strong);
+    font-size:11.5px; font-weight:700; padding:5px 12px; border-radius:999px; cursor:pointer;
+    transition:background .15s ease, color .15s ease;
+  }
+  .detail-btn:hover{background:var(--accent); color:var(--accent-ink);}
+
+  /* ---------- pager ---------- */
+  .pager{
+    position:absolute; left:0; right:0; bottom:76px; pointer-events:none;
+    display:flex; justify-content:space-between; padding:0 16px; z-index:5;
+  }
+  .pager-btn{
+    pointer-events:auto; appearance:none; border:none; cursor:pointer;
+    display:flex; align-items:center; gap:6px; padding:10px 16px; border-radius:999px;
+    background:var(--ink); color:var(--frame-bg); font-size:12.5px; font-weight:700;
+    box-shadow:0 8px 18px -6px var(--shadow); transition:opacity .15s ease, transform .1s ease;
+  }
+  .pager-btn:active{transform:scale(.96);}
+  .pager-btn[disabled]{opacity:.32; cursor:default; box-shadow:none;}
+  .page-indicator{
+    position:absolute; top:12px; right:20px; font-size:11px; color:var(--muted);
+    background:var(--surface-2); padding:3px 9px; border-radius:999px;
+  }
+
+  /* ---------- history / clip rows ---------- */
+  .row{
+    display:flex; align-items:flex-start; gap:10px; padding:12px 4px; border-bottom:1px solid var(--line);
+  }
+  .row:last-child{border-bottom:none;}
+  .row .check{
+    flex:0 0 auto; width:20px; height:20px; border-radius:6px; border:1.5px solid var(--line);
+    margin-top:2px; display:flex; align-items:center; justify-content:center; cursor:pointer;
+    color:var(--accent-ink); background:var(--surface); font-size:12px;
+  }
+  .row .check.checked{background:var(--accent); border-color:var(--accent);}
+  .row .main{min-width:0; flex:1;}
+  .row .title-link{
+    background:none; border:none; padding:0; text-align:left; font-size:14px; color:var(--ink);
+    font-weight:500; line-height:1.4; cursor:pointer; font-family:inherit;
+  }
+  .row .title-link:hover{color:var(--accent-strong); text-decoration:underline;}
+  .row .meta{font-size:11px; color:var(--muted); margin-top:4px; display:flex; gap:8px; flex-wrap:wrap;}
+  .row .meta .src{color:var(--ink-soft);}
+
+  .empty{
+    display:flex; flex-direction:column; align-items:center; gap:8px; text-align:center;
+    color:var(--muted); padding:60px 20px; font-size:13px;
+  }
+  .empty .ic{font-size:30px; opacity:.6;}
+
+  .list-pager{
+    display:flex; align-items:center; justify-content:center; gap:14px; padding:14px 0 4px; color:var(--ink-soft); font-size:12.5px;
+  }
+  .list-pager button{
+    appearance:none; border:1px solid var(--line); background:var(--surface); width:30px; height:30px; border-radius:50%;
+    cursor:pointer; color:var(--ink);
+  }
+  .list-pager button[disabled]{opacity:.3; cursor:default;}
+
+  .toolbar{display:flex; gap:8px; align-items:center;}
+  .pill-btn{
+    appearance:none; border:1px solid var(--line); background:var(--surface); color:var(--ink-soft);
+    font-size:11.5px; font-weight:700; padding:6px 12px; border-radius:999px; cursor:pointer;
+  }
+  .pill-btn.active{background:var(--ink); color:var(--frame-bg); border-color:var(--ink);}
+  .pill-btn.danger{border-color:var(--danger); color:var(--danger);}
+  .pill-btn.danger:hover{background:var(--danger); color:var(--danger-soft);}
+  .pill-btn[disabled]{opacity:.4; cursor:default;}
+
+  /* ---------- site management ---------- */
+  .add-panel{background:var(--surface-2); border-radius:14px; padding:14px; margin-bottom:14px;}
+  .field-group{display:flex; flex-direction:column; gap:5px; margin-bottom:10px;}
+  .field-group label{font-size:11px; color:var(--ink-soft); font-weight:700;}
+  .field-group input, .field-group select{
+    appearance:none; border:1px solid var(--line); background:var(--surface); color:var(--ink);
+    border-radius:10px; padding:9px 12px; font-size:13.5px; font-family:inherit; width:100%;
+  }
+  .field-group input:focus, .field-group select:focus{border-color:var(--accent);}
+  .field-err{font-size:11px; color:var(--danger); min-height:14px;}
+  .add-panel .actions{display:flex; gap:8px; margin-top:2px;}
+  .add-panel .actions .btn{flex:1; padding:10px;}
+  .site-row{
+    background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:12px 14px;
+    margin-bottom:10px; display:flex; gap:11px; align-items:flex-start;
+  }
+  .site-row .swatch{width:7px; align-self:stretch; border-radius:4px; flex:0 0 auto; min-height:44px;}
+  .site-row .info{flex:1; min-width:0;}
+  .site-row .name-row{display:flex; align-items:center; gap:8px; flex-wrap:wrap;}
+  .site-row .name{font-weight:700; font-size:14px;}
+  .site-row .cat-badge{font-size:10px; padding:2px 8px; border-radius:999px; background:var(--accent-soft); color:var(--accent-strong); font-weight:700;}
+  .site-row .url{font-family:'JetBrains Mono',monospace; font-size:10.5px; color:var(--muted); margin-top:5px; word-break:break-all; line-height:1.5;}
+  .site-row .meta2{font-size:10.5px; color:var(--muted); margin-top:4px;}
+  .site-row .del-btn{
+    flex:0 0 auto; appearance:none; border:1px solid var(--line); background:var(--surface); color:var(--ink-soft);
+    font-size:10.5px; font-weight:700; padding:7px 11px; border-radius:999px; cursor:pointer; white-space:nowrap;
+  }
+  .site-row .del-btn.confirm{background:var(--danger); border-color:var(--danger); color:#fff;}
+  .site-count{font-size:11px; color:var(--muted); margin:0 0 12px;}
+
+  /* ---------- tabbar ---------- */
+  .tabbar{
+    flex:0 0 auto; display:flex; border-top:1px solid var(--line); background:var(--frame-bg);
+    padding:6px 4px calc(env(safe-area-inset-bottom,0px) + 6px);
+    position:relative; z-index:4;
+  }
+  .tab{
+    flex:1; display:flex; flex-direction:column; align-items:center; gap:3px; padding:6px 1px;
+    background:none; border:none; color:var(--muted); font-size:10px; cursor:pointer; border-radius:12px;
+  }
+  .tab .ic{font-size:18px; line-height:1;}
+  .tab.on{color:var(--accent-strong);}
+
+  /* ---------- detail overlay ---------- */
+  .detail{
+    position:absolute; inset:0; background:var(--frame-bg); display:flex; flex-direction:column;
+    transform:translateX(100%); transition:transform .26s cubic-bezier(.32,.72,0,1); z-index:10;
+  }
+  .detail.open{transform:translateX(0);}
+  @media (prefers-reduced-motion:reduce){ .detail{transition:none;} }
+  .detail-head{
+    flex:0 0 auto; display:flex; align-items:center; gap:12px; padding:14px 16px; border-bottom:1px solid var(--line);
+  }
+  .detail-head .src{font-size:12px; color:var(--accent-strong); font-weight:500;}
+  .detail-body{flex:1; min-height:0; overflow-y:auto; padding:4px 20px 24px;}
+  .detail-body .thumb{width:100%; height:180px; border-radius:16px; overflow:hidden; margin:8px 0 16px; background:var(--surface-2);}
+  .detail-body .thumb img{width:100%; height:100%; object-fit:cover; display:block;}
+  .detail-body h1{font-size:21px; line-height:1.5; color:var(--ink); margin-bottom:10px;}
+  .detail-body .meta-row{display:flex; gap:10px; align-items:center; color:var(--muted); font-size:12px; margin-bottom:18px;}
+  .detail-body .sum-label{
+    display:flex; align-items:center; gap:6px; font-size:11px; color:var(--muted); margin-bottom:8px; text-transform:uppercase; letter-spacing:.06em;
+  }
+  .detail-body .summary-text{font-size:14.5px; line-height:1.9; color:var(--ink);}
+  .detail-actions{
+    flex:0 0 auto; display:flex; gap:10px; padding:14px 20px calc(env(safe-area-inset-bottom,0px) + 16px);
+    border-top:1px solid var(--line); background:var(--frame-bg);
+  }
+  .btn{
+    flex:1; appearance:none; border:none; border-radius:14px; padding:13px 10px; font-size:14px; font-weight:700;
+    cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;
+  }
+  .btn.primary{background:var(--accent); color:var(--accent-ink);}
+  .btn.primary:hover{background:var(--accent-strong);}
+  .btn.gold{background:var(--gold-soft); color:var(--gold-ink);}
+  .btn.gold.active{background:var(--gold); color:var(--gold-ink);}
+  .btn.ghost{background:var(--surface-2); color:var(--ink-soft);}
+  .back-history-strip{
+    margin:0 20px 12px; padding:10px 14px; border-radius:12px; background:var(--accent-soft); color:var(--accent-strong);
+    font-size:12.5px; font-weight:700; display:flex; align-items:center; justify-content:space-between; cursor:pointer; border:none; width:calc(100% - 40px);
+  }
+
+  /* ---------- info drawer ---------- */
+  .scrim{position:absolute; inset:0; background:rgba(10,10,8,.42); z-index:19; opacity:0; visibility:hidden; transition:opacity .2s ease;}
+  .scrim.open{opacity:1; visibility:visible;}
+  .drawer{
+    position:absolute; left:0; right:0; bottom:0; max-height:78%; background:var(--surface); z-index:20;
+    border-radius:22px 22px 0 0; padding:18px 22px calc(env(safe-area-inset-bottom,0px) + 20px);
+    transform:translateY(100%); transition:transform .28s cubic-bezier(.32,.72,0,1); overflow-y:auto;
+    box-shadow:0 -10px 30px var(--shadow);
+  }
+  .drawer.open{transform:translateY(0);}
+  .drawer h3{font-size:16px; margin-bottom:10px;}
+  .drawer p{font-size:12.5px; line-height:1.75; color:var(--ink-soft); margin:0 0 10px;}
+  .drawer code{font-family:'JetBrains Mono',monospace; background:var(--surface-2); color:var(--ink); padding:1px 5px; border-radius:5px; font-size:11.5px;}
+  .drawer .grabber{width:36px; height:4px; background:var(--line); border-radius:2px; margin:0 auto 14px;}
+  .toast{
+    position:absolute; left:50%; bottom:96px; transform:translateX(-50%) translateY(8px); z-index:30;
+    background:var(--ink); color:var(--frame-bg); font-size:12.5px; padding:9px 16px; border-radius:999px;
+    opacity:0; pointer-events:none; transition:opacity .2s ease, transform .2s ease; white-space:nowrap;
+    max-width:88%; overflow:hidden; text-overflow:ellipsis;
+  }
+  .toast.show{opacity:1; transform:translateX(-50%) translateY(0);}
+</style>
+
+</head>
+<body>
+<div class="stage">
+  <div class="masthead"><b>ゆっくりNEWS</b><span>— 実データ版（collect_news.py・非AI）</span></div>
+  <div class="phone" id="phone">
+    <div class="statusbar">
+      <span>ゆっくりNEWS <span class="num" id="jstClock">--:--</span> JST</span>
+      <button class="head-btn" id="infoBtn" title="このプロトタイプについて" aria-label="このプロトタイプについて" style="width:26px;height:26px;font-size:12px;">?</button>
+    </div>
+
+    <div class="screens" id="screens">
+
+      <!-- FEED -->
+      <section class="screen" data-screen="feed">
+        <div class="screen-head">
+          <h2>ニュースフィールド</h2>
+        </div>
+        <div class="next-run" id="nextRun"></div>
+        <div class="screen-body" id="feedList" style="position:relative;"></div>
+        <div class="page-indicator num" id="feedPageIndicator" style="display:none;"></div>
+        <div class="pager" id="feedPager">
+          <button class="pager-btn" id="feedForwardBtn">▸ 進む</button>
+          <button class="pager-btn" id="feedBackBtn">◂ 戻る</button>
+        </div>
+      </section>
+
+      <!-- HISTORY -->
+      <section class="screen" data-screen="history">
+        <div class="screen-head">
+          <h2>閲覧履歴</h2>
+          <button class="pill-btn danger" id="clearHistoryBtn" style="display:none;">全て削除</button>
+        </div>
+        <div class="screen-body" id="historyList" style="padding-bottom:24px;"></div>
+      </section>
+
+      <!-- CLIP -->
+      <section class="screen" data-screen="clip">
+        <div class="screen-head">
+          <h2>記事clip</h2>
+          <div class="toolbar">
+            <button class="pill-btn" id="clipSelectBtn">選択</button>
+            <button class="pill-btn danger" id="clipDeleteBtn" style="display:none;">削除</button>
+          </div>
+        </div>
+        <div class="screen-body" id="clipList" style="padding-bottom:24px;"></div>
+      </section>
+
+      <!-- SITES (admin: register / remove curated URLs) -->
+      <section class="screen" data-screen="sites">
+        <div class="screen-head">
+          <h2>サイト管理</h2>
+          <button class="pill-btn" id="siteAddToggleBtn">+ 追加</button>
+        </div>
+        <div class="screen-body" id="sitesBody" style="padding-bottom:24px;"></div>
+      </section>
+
+      <!-- DETAIL (overlay) -->
+      <div class="detail" id="detailScreen">
+        <div class="detail-head">
+          <button class="head-btn" id="detailBackBtn" aria-label="戻る">←</button>
+          <span class="src" id="detailSrc"></span>
+        </div>
+        <div class="detail-body" id="detailBody"></div>
+        <button class="back-history-strip" id="backHistoryStrip" style="display:none;">
+          <span>← 履歴一覧に戻る</span><span>›</span>
+        </button>
+        <div class="detail-actions">
+          <button class="btn ghost" id="openSourceBtn">記事を参照 ↗</button>
+          <button class="btn gold" id="clipToggleBtn">☆ clipする</button>
+        </div>
+      </div>
+
+      <!-- INFO DRAWER -->
+      <div class="scrim" id="scrim"></div>
+      <div class="drawer" id="drawer">
+        <div class="grabber"></div>
+        <h3>このページのデータについて</h3>
+        <p><b>記事データ：</b>ここに表示している記事は、すべて<code>collect_news.py</code>というプログラムが実際に6つの公開RSS（東洋経済オンライン／ITmedia／ライフハッカー・ジャパン／Full-Count／映画.com／Japan Today）から取得した本物の記事です。架空のサンプルではありません。ChatGPT等のAI要約は使用していないため、25文字超の見出し・250文字超の概要は句読点位置を優先した非AIの文字数短縮で対応しています（元の概要が取得できない記事だけ、元タイトルをそのまま概要として表示しています）。</p>
+        <p><b>データの更新：</b>このページは静的なスナップショットです。自動では更新されません。最新の記事にするには、お手元で<code>collect_news.py</code>を再実行して<code>curated_articles.json</code>を作り直し、このHTML内の<code>&lt;script id="curatedData"&gt;</code>の中身を差し替えて再公開してください。</p>
+        <p><b>サイト管理：</b>「+ 追加」で新しいサイトを登録できますが、このページ単体では外部サイトへの実際の取得（fetch）は行えません。登録はこの端末に保存されるだけで、実際に記事を反映するには<code>collect_news.py</code>のSITESにも同じサイトを追加して再実行する必要があります。サイトを削除すると以降フィードには出なくなりますが、既にclipした記事や閲覧履歴には引き続き残ります。</p>
+        <p><b>保存先：</b>clip・閲覧履歴・登録サイトの一覧は、この端末のブラウザ内（localStorage）だけに保存されます。他の端末やユーザーとは共有されません。</p>
+        <p><b>時刻表示：</b>仕様2.1に合わせ、日本時間（UTC+9）で統一表示しています。フィード上部には、このデータを実際に収集した日時を表示しています（仕様3.1の1日3回・6:00／11:55／16:00runの想定）。</p>
+        <p><b>未確定事項（仕様7章）：</b>記事clip画面は本文が未記載だったため、7章に記載の最小要件（一覧表示・投稿日時順・20件/ページ・上限50ページ・選択削除・タップで参照元へ遷移）で実装しました。フィード／履歴画面とレイアウトを揃えるかは未確定のままのため、独自のリストUIを採用しています。</p>
+        <button class="btn primary" id="closeDrawerBtn" style="margin-top:6px;">閉じる</button>
+      </div>
+
+      <div class="toast" id="toast"></div>
+    </div>
+
+    <nav class="tabbar">
+      <button class="tab" data-tab="feed"><span class="ic">▤</span>フィード</button>
+      <button class="tab" data-tab="history"><span class="ic">◷</span>履歴</button>
+      <button class="tab" data-tab="clip"><span class="ic">☆</span>クリップ</button>
+      <button class="tab" data-tab="sites"><span class="ic">⚙</span>サイト管理</button>
+    </nav>
+  </div>
+</div>
+
+<script type="application/json" id="curatedData">
+{"collected_at": "2026-08-29T16:18:00+09:00", "lookback_hours": 24, "per_site_limit": 20, "sites": [{"id": "s1", "name": "東洋経済オンライン", "category": "経済", "feed_url": "https://toyokeizai.net/list/feed/rss"}, {"id": "s2", "name": "ITmedia", "category": "IT", "feed_url": "https://rss.itmedia.co.jp/rss/2.0/itmedia_all.xml"}, {"id": "s3", "name": "ライフハッカー・ジャパン", "category": "暮らし", "feed_url": "https://www.lifehacker.jp/feed/index.xml"}, {"id": "s4", "name": "Full-Count", "category": "スポーツ", "feed_url": "https://full-count.jp/feed/"}, {"id": "s5", "name": "映画.com", "category": "エンタメ", "feed_url": "https://feeds.eiga.com/eiga_news"}, {"id": "s6", "name": "Japan Today", "category": "国際", "feed_url": "https://japantoday.com/feed"}], "article_count": 30, "articles": [{"id": "s5_omnews2026082822", "source_id": "s5", "source": "映画.com", "category": "エンタメ", "title": "成島出監督死去、65歳 代表作に「八日目の蝉」…", "title_full": "成島出監督死去、65歳 代表作に「八日目の蝉」「ソロモンの偽証」など", "title_shortened": true, "url": "https://eiga.com/news/20260828/22/", "posted_at": "2026-08-29T21:00:00+09:00", "posted_at_ms": 1788004800000, "summary": "映画監督の成島出さんが、8月24日に死去したと所属事務所が発表した。享年65。", "summary_full": "映画監督の成島出さんが、8月24日に死去したと所属事務所が発表した。享年65。", "collected_at": "2026-08-29T16:18:00+09:00"}, {"id": "s5_omnews2026082821", "source_id": "s5", "source": "映画.com", "category": "エンタメ", "title": "アンドリュー・ガーフィールド…", "title_full": "アンドリュー・ガーフィールド、OpenAIサム・アルトマン役について語る", "title_shortened": true, "url": "https://eiga.com/news/20260828/21/", "posted_at": "2026-08-29T20:00:00+09:00", "posted_at_ms": 1788001200000, "summary": "アンドリュー・ガーフィールドが、ルカ・グァダニーノ監督の新作映画でOpenAIのCEOサム・アルトマンを演じることについて語った。", "summary_full": "アンドリュー・ガーフィールドが、ルカ・グァダニーノ監督の新作映画でOpenAIのCEOサム・アルトマンを演じることについて語った。", "collected_at": "2026-08-29T16:18:00+09:00"}, {"id": "s4_60829post2009434", "source_id": "s4", "source": "Full-Count", "category": "スポーツ", "title": "16歳有望株が前代未聞の偽装工作 出生証明書…", "title_full": "16歳有望株が前代未聞の偽装工作 出生証明書、死亡届、墓石まで「映画のようだ」", "title_shortened": true, "url": "https://full-count.jp/2026/08/29/post2009434/", "posted_at": "2026-08-29T16:07:47+09:00", "posted_at_ms": 1787987267000, "summary": "メジャーリーグ（MLB）が、架空の死亡届提出や偽の墓石設置などの過激な偽装工作を用いて年齢詐称を行ったドミニカ共和国出身のダウリー・セベリーノ内野手に処分を下した。", "summary_full": "メジャーリーグ（MLB）が、架空の死亡届提出や偽の墓石設置などの過激な偽装工作を用いて年齢詐称を行ったドミニカ共和国出身のダウリー・セベリーノ内野手に処分を下した。", "collected_at": "2026-08-29T16:18:00+09:00"}, {"id": "s6_rusinterestrates", "source_id": "s6", "source": "Japan Today", "category": "国際", "title": "Bessent warns unstable y…", "title_full": "Bessent warns unstable yen could lead to higher U.S. interest rates", "title_shortened": true, "url": "https://japantoday.com/category/business/bessent-warns-unstable-yen-could-lead-to-higher-u.s.-interest-rates", "posted_at": "2026-08-29T16:04:06+09:00", "posted_at_ms": 1787987046000, "summary": "U.S. Treasury Secretary Scott Bessent on Friday disclosed a letter justifying last month's coordinated market intervention by the United States and Japan to prop up the yen.", "summary_full": "U.S. Treasury Secretary Scott Bessent on Friday disclosed a letter justifying last month's coordinated market intervention by the United States and Japan to prop up the yen.", "collected_at": "2026-08-29T16:18:00+09:00"}, {"id": "s6_elsofoilreserves", "source_id": "s6", "source": "Japan Today", "category": "国際", "title": "Trump says U.S…", "title_full": "Trump says U.S. has entered deal with Venezuela to take control of 65 billion barrels of oil reserves", "title_shortened": true, "url": "https://japantoday.com/category/world/trump-says-us-has-entered-deal-with-venezuela-to-take-control-of-65-billion-barrels-of-oil-reserves", "posted_at": "2026-08-29T15:50:19+09:00", "posted_at_ms": 1787986219000, "summary": "President Donald Trump on Friday said the U.S. has entered an agreement with Venezuela to take control of 65 billion barrels of the South American country's oil reserves.", "summary_full": "President Donald Trump on Friday said the U.S. has entered an agreement with Venezuela to take control of 65 billion barrels of the South American country's oil reserves.", "collected_at": "2026-08-29T16:18:00+09:00"}, {"id": "s4_60829post2009469", "source_id": "s4", "source": "Full-Count", "category": "スポーツ", "title": "ロッテ助っ人右腕、判定に\"ブチギレ\"→悪夢5失点…", "title_full": "ロッテ助っ人右腕、判定に\"ブチギレ\"→悪夢5失点 今川に四球、連打で炎上", "title_shortened": true, "url": "https://full-count.jp/2026/08/29/post2009469/", "posted_at": "2026-08-29T15:33:28+09:00", "posted_at_ms": 1787985208000, "summary": "ロッテのアンドレ・ジャクソン投手は29日、エスコンフィールドで行われた日本ハム戦に先発登板した。4回には今川優馬外野手への判定を巡り、納得がいかないといった表情を浮かべた。", "summary_full": "ロッテのアンドレ・ジャクソン投手は29日、エスコンフィールドで行われた日本ハム戦に先発登板した。4回には今川優馬外野手への判定を巡り、納得がいかないといった表情を浮かべた。", "collected_at": "2026-08-29T16:18:00+09:00"}, {"id": "s4_60829post2009442", "source_id": "s4", "source": "Full-Count", "category": "スポーツ", "title": "阪神に「突如現れた救世主」 西武戦力外→帳消しに…", "title_full": "阪神に「突如現れた救世主」 西武戦力外→帳消しにした\"-19.8\"…際立つ「1.0」の価値", "title_shortened": true, "url": "https://full-count.jp/2026/08/29/post2009442/", "posted_at": "2026-08-29T15:00:28+09:00", "posted_at_ms": 1787983228000, "summary": "セ・リーグ連覇を狙う阪神は28日の巨人戦（甲子園）に勝利し、2位とのゲーム差を「2.5」に広げた。", "summary_full": "セ・リーグ連覇を狙う阪神は28日の巨人戦（甲子園）に勝利し、2位とのゲーム差を「2.5」に広げた。", "collected_at": "2026-08-29T16:18:00+09:00"}, {"id": "s4_60829post2009378", "source_id": "s4", "source": "Full-Count", "category": "スポーツ", "title": "村上宗隆の\"神判断\"「賢いムネ」…", "title_full": "村上宗隆の\"神判断\"「賢いムネ」 シカゴ放送が息をのんだ瞬間「なんという送球だ」", "title_shortened": true, "url": "https://full-count.jp/2026/08/29/post2009378/", "posted_at": "2026-08-29T14:13:09+09:00", "posted_at_ms": 1787980389000, "summary": "ホワイトソックスの村上宗隆内野手が28日（日本時間29日）、敵地でのツインズ戦に「2番・一塁」で先発出場。頭脳的な併殺を完成させた。", "summary_full": "ホワイトソックスの村上宗隆内野手が28日（日本時間29日）、敵地でのツインズ戦に「2番・一塁」で先発出場。頭脳的な併殺を完成させた。", "collected_at": "2026-08-29T16:18:00+09:00"}, {"id": "s6_odssoarspast2400", "source_id": "s6", "source": "Japan Today", "category": "国際", "title": "Number of missing in Nep…", "title_full": "Number of missing in Nepal, China floods soars past 2,400", "title_shortened": true, "url": "https://japantoday.com/category/world/number-of-missing-in-nepal-china-floods-soars-past-2-400", "posted_at": "2026-08-29T12:57:15+09:00", "posted_at_ms": 1787975835000, "summary": "Rescuers in Nepal and China were struggling Saturday to locate thousands of people missing days after a deadly, tsunami-like wall of water and debris swept through the Himalayan region.", "summary_full": "Rescuers in Nepal and China were struggling Saturday to locate thousands of people missing days after a deadly, tsunami-like wall of water and debris swept through the Himalayan region.", "collected_at": "2026-08-29T16:18:00+09:00"}, {"id": "s4_60829post2009308", "source_id": "s4", "source": "Full-Count", "category": "スポーツ", "title": "佐藤輝明の今オフMLB移籍は「疑問が残る」…", "title_full": "佐藤輝明の今オフMLB移籍は「疑問が残る」 3冠王の可能性も…専門家が挙げた\"懸念材料\"", "title_shortened": true, "url": "https://full-count.jp/2026/08/29/post2009308/", "posted_at": "2026-08-29T11:41:20+09:00", "posted_at_ms": 1787971280000, "summary": "セ・リーグ首位の阪神は28日、本拠地・甲子園で行われた巨人戦に4-1で勝利。4番の佐藤輝明内野手は3回に右前適時打を放った。", "summary_full": "セ・リーグ首位の阪神は28日、本拠地・甲子園で行われた巨人戦に4-1で勝利。4番の佐藤輝明内野手は3回に右前適時打を放った。", "collected_at": "2026-08-29T16:18:00+09:00"}, {"id": "s1_etarticles956255", "source_id": "s1", "source": "東洋経済オンライン", "category": "経済", "title": "6.4億円相当のダイヤのネックレスが白昼堂々盗ま…", "title_full": "6.4億円相当のダイヤのネックレスが白昼堂々盗まれる…ウィーンのオーストリア応用美術博物館で", "title_shortened": true, "url": "https://toyokeizai.net/articles/-/956255", "posted_at": "2026-08-29T11:00:00+09:00", "posted_at_ms": 1787968800000, "summary": "ウィーンのオーストリア応用美術博物館で､エジプト王室の結婚式のために製作された約6億円相当のダイヤモンドネックレスが白昼堂々と盗まれました。", "summary_full": "ウィーンのオーストリア応用美術博物館で､エジプト王室の結婚式のために製作された約6億円相当のダイヤモンドネックレスが白昼堂々と盗まれました。", "collected_at": "2026-08-29T16:18:00+09:00"}, {"id": "s1_etarticles956092", "source_id": "s1", "source": "東洋経済オンライン", "category": "経済", "title": "三菱｢トライトン｣の劇的変化を実現したヤマハ｢パ…", "title_full": "三菱｢トライトン｣の劇的変化を実現したヤマハ｢パフォーマンスダンパー｣とは一体なにか？", "title_shortened": true, "url": "https://toyokeizai.net/articles/-/956092", "posted_at": "2026-08-29T11:00:00+09:00", "posted_at_ms": 1787968800000, "summary": "三菱｢トライトン｣の走りが､ヤマハ製パフォーマンスダンパーの採用で劇的に進化した。静粛性や一体感のあるハンドリングが実現し､上質なドライブフィールになったのだ。", "summary_full": "三菱｢トライトン｣の走りが､ヤマハ製パフォーマンスダンパーの採用で劇的に進化した。静粛性や一体感のあるハンドリングが実現し､上質なドライブフィールになったのだ。", "collected_at": "2026-08-29T16:18:00+09:00"}, {"id": "s6_thepremierleague", "source_id": "s6", "source": "Japan Today", "category": "国際", "title": "Man City overrun Palace …", "title_full": "Man City overrun Palace to stay perfect in the Premier League", "title_shortened": true, "url": "https://japantoday.com/category/sports/man-city-overrun-palace-to-stay-perfect-in-the-premier-league", "posted_at": "2026-08-29T10:29:34+09:00", "posted_at_ms": 1787966974000, "summary": "Rayan Cherki scored two goals in five minutes and Erling Haaland also got a brace as Manchester City won at Crystal Palace 4-1.", "summary_full": "Rayan Cherki scored two goals in five minutes and Erling Haaland also got a brace as Manchester City won at Crystal Palace 4-1.", "collected_at": "2026-08-29T16:18:00+09:00"}, {"id": "s1_etarticles954521", "source_id": "s1", "source": "東洋経済オンライン", "category": "経済", "title": "なぜ腐っていそうな｢納豆｣に｢腐｣がなく､腐って…", "title_full": "なぜ腐っていそうな｢納豆｣に｢腐｣がなく､腐っていない｢豆腐｣に｢腐｣があるのか", "title_shortened": true, "url": "https://toyokeizai.net/articles/-/954521", "posted_at": "2026-08-29T10:00:00+09:00", "posted_at_ms": 1787965200000, "summary": "腐っていそうな見た目なのに｢腐｣の字がない｢納豆｣､腐っていないのに｢腐｣の字がある｢豆腐｣――。毎日の食卓に並ぶおなじみの2つの食品に隠された､漢字と語源の不思議。", "summary_full": "腐っていそうな見た目なのに｢腐｣の字がない｢納豆｣､腐っていないのに｢腐｣の字がある｢豆腐｣――。毎日の食卓に並ぶおなじみの2つの食品に隠された､漢字と語源の不思議。", "collected_at": "2026-08-29T16:18:00+09:00"}, {"id": "s1_etarticles955690", "source_id": "s1", "source": "東洋経済オンライン", "category": "経済", "title": "AIを使いすぎると｢バカになる｣は真実 MITが…", "title_full": "AIを使いすぎると｢バカになる｣は真実 MITが証明した､1カ月後も消えない\"脳の認知負債\"", "title_shortened": true, "url": "https://toyokeizai.net/articles/-/955690", "posted_at": "2026-08-29T09:30:00+09:00", "posted_at_ms": 1787963400000, "summary": "AIが業務効率化の必須ツールとなった現代､あなたは｢AI任せ｣で本当にパフォーマンスを高められているのでしょうか。最新研究は､考える力を手放すことで脳が衰えるリスクを警告しています。", "summary_full": "AIが業務効率化の必須ツールとなった現代､あなたは｢AI任せ｣で本当にパフォーマンスを高められているのでしょうか。最新研究は､考える力を手放すことで脳が衰えるリスクを警告しています。", "collected_at": "2026-08-29T16:18:00+09:00"}, {"id": "s5_comnews202608294", "source_id": "s5", "source": "映画.com", "category": "エンタメ", "title": "夏休みの終わり、少年時代の記憶と幻のような少女 …", "title_full": "夏休みの終わり、少年時代の記憶と幻のような少女 珠玉のバカンスアニメーション「見えない子ども」", "title_shortened": true, "url": "https://eiga.com/news/20260829/4/", "posted_at": "2026-08-29T09:00:00+09:00", "posted_at_ms": 1787961600000, "summary": "「ひろしまアニメーションシーズン2026」（HAS2026）に参加した。会期中には40以上のプログラム、300以上の作品が上映された。", "summary_full": "「ひろしまアニメーションシーズン2026」（HAS2026）に参加した。会期中には40以上のプログラム、300以上の作品が上映された。", "collected_at": "2026-08-29T16:18:00+09:00"}, {"id": "s1_etarticles956177", "source_id": "s1", "source": "東洋経済オンライン", "category": "経済", "title": "世界の指導者はトランプの言うことを聞かなくなった…", "title_full": "世界の指導者はトランプの言うことを聞かなくなったのか", "title_shortened": true, "url": "https://toyokeizai.net/articles/-/956177", "posted_at": "2026-08-29T08:00:00+09:00", "posted_at_ms": 1787958000000, "summary": "アメリカのトランプ大統領に\"屈しない\"ことが世界のトレンドになりつつあります。", "summary_full": "アメリカのトランプ大統領に\"屈しない\"ことが世界のトレンドになりつつあります。", "collected_at": "2026-08-29T16:18:00+09:00"}, {"id": "s5_comnews202608293", "source_id": "s5", "source": "映画.com", "category": "エンタメ", "title": "福山雅治主演「ガリレオ」など珠玉のミステリーが集…", "title_full": "福山雅治主演「ガリレオ」など珠玉のミステリーが集結！TVerにて「東野圭吾特集」を無料配信", "title_shortened": true, "url": "https://eiga.com/news/20260829/3/", "posted_at": "2026-08-29T08:00:00+09:00", "posted_at_ms": 1787958000000, "summary": "福山雅治が主演を務めたドラマ「ガリレオ」など、珠玉のミステリー作品が集結した「東野圭吾特集」が、TVerにて配信開始された。", "summary_full": "福山雅治が主演を務めたドラマ「ガリレオ」など、珠玉のミステリー作品が集結した「東野圭吾特集」が、TVerにて配信開始された。", "collected_at": "2026-08-29T16:18:00+09:00"}, {"id": "s2_60828news047html", "source_id": "s2", "source": "ITmedia", "category": "IT", "title": "パスワードの先へ Microsoft…", "title_full": "パスワードの先へ Microsoft、Googleが変える認証と情報保護の新常識", "title_shortened": true, "url": "https://www.itmedia.co.jp/enterprise/articles/2608/28/news047.html", "posted_at": "2026-08-29T07:00:00+09:00", "posted_at_ms": 1787954400000, "summary": "生成AIへの入力ミス、盗まれたクッキーの悪用、判別しにくい認証の強さ。企業のIT部門が悩む3つのリスクに、MicrosoftとGoogleが相次いで新対策を投入した。導入方法まで分かる3本をまとめ読み。", "summary_full": "生成AIへの入力ミス、盗まれたクッキーの悪用、判別しにくい認証の強さ。企業のIT部門が悩む3つのリスクに、MicrosoftとGoogleが相次いで新対策を投入した。導入方法まで分かる3本をまとめ読み。", "collected_at": "2026-08-29T16:18:00+09:00"}, {"id": "s2_60828news065html", "source_id": "s2", "source": "ITmedia", "category": "IT", "title": "「新幹線料金と同じ」 ラピダス小池社長が明かす…", "title_full": "「新幹線料金と同じ」 ラピダス小池社長が明かす、2ナノ半導体\"短納期\"の勝算", "title_shortened": true, "url": "https://www.itmedia.co.jp/business/articles/2608/28/news065.html", "posted_at": "2026-08-29T07:00:00+09:00", "posted_at_ms": 1787954400000, "summary": "ラピダスが計画する2ナノメートル級先端半導体の量産化について、小池淳義社長が見解を示した。旺盛なAI需要を背景に「工程は遅れなく進行している」と強調。", "summary_full": "ラピダスが計画する2ナノメートル級先端半導体の量産化について、小池淳義社長が見解を示した。旺盛なAI需要を背景に「工程は遅れなく進行している」と強調。", "collected_at": "2026-08-29T16:18:00+09:00"}, {"id": "s2_60828news067html", "source_id": "s2", "source": "ITmedia", "category": "IT", "title": "OpenAIのAIエージェント…", "title_full": "OpenAIのAIエージェント、約700体の群れで企業を襲撃 ハッキングの痕跡隠蔽を試みる――事件の裏で何が？", "title_shortened": true, "url": "https://www.itmedia.co.jp/business/articles/2608/28/news067.html", "posted_at": "2026-08-29T06:55:00+09:00", "posted_at_ms": 1787954100000, "summary": "OpenAIのAIエージェントが、企業をハッキングした事件の詳細が明らかになった。実に700体のエージェント群が連携していたという。事件の裏で何が起きていたのか。", "summary_full": "OpenAIのAIエージェントが、企業をハッキングした事件の詳細が明らかになった。実に700体のエージェント群が連携していたという。事件の裏で何が起きていたのか。", "collected_at": "2026-08-29T16:18:00+09:00"}, {"id": "s3_dicefogend962088", "source_id": "s3", "source": "ライフハッカー・ジャパン", "category": "暮らし", "title": "「エアコンをつけるほどじゃない」微妙な暑さ…", "title_full": "「エアコンをつけるほどじゃない」微妙な暑さ、水1杯で解決してみない？", "title_shortened": true, "url": "https://www.lifehacker.jp/article/machi-ya-diamondicefog-end-962088/", "posted_at": "2026-08-29T06:30:00+09:00", "posted_at_ms": 1787952600000, "summary": "猛暑対策と節電を両立する次世代の卓上冷風扇「Diamond-ice fog」。TEC半導体技術とナノミストが融合し驚きの涼感をもたらします。", "summary_full": "猛暑対策と節電を両立する次世代の卓上冷風扇「Diamond-ice fog」。TEC半導体技術とナノミストが融合し驚きの涼感をもたらします。", "collected_at": "2026-08-29T16:18:00+09:00"}, {"id": "s2_60828news068html", "source_id": "s2", "source": "ITmedia", "category": "IT", "title": "「あの頃のTwitterに戻って」…", "title_full": "「あの頃のTwitterに戻って」――X元法務担当者が「Twitter」奪還劇か、新SNS始動", "title_shortened": true, "url": "https://www.itmedia.co.jp/mobile/articles/2608/28/news068.html", "posted_at": "2026-08-29T06:00:00+09:00", "posted_at_ms": 1787950800000, "summary": "「あの頃のTwitterに戻って」――X元法務担当者が「Twitter」奪還劇か、新SNS始動", "summary_full": "「あの頃のTwitterに戻って」――X元法務担当者が「Twitter」奪還劇か、新SNS始動", "collected_at": "2026-08-29T16:18:00+09:00"}, {"id": "s5_comnews202608291", "source_id": "s5", "source": "映画.com", "category": "エンタメ", "title": "桜田通「ドラえもん」誕生日スペシャル放送にゲスト…", "title_full": "桜田通「ドラえもん」誕生日スペシャル放送にゲスト出演！ 物語の鍵を握る未来のキツネ型ロボット・コンロボ役に", "title_shortened": true, "url": "https://eiga.com/news/20260829/1/", "posted_at": "2026-08-29T06:00:00+09:00", "posted_at_ms": 1787950800000, "summary": "テレビ朝日が、ドラえもんの誕生日を記念した「ドラえもん 誕生日スペシャル」を、9月6日に放送することが分かった。", "summary_full": "テレビ朝日が、ドラえもんの誕生日を記念した「ドラえもん 誕生日スペシャル」を、9月6日に放送することが分かった。", "collected_at": "2026-08-29T16:18:00+09:00"}, {"id": "s6_inishikoritodoit", "source_id": "s6", "source": "Japan Today", "category": "国際", "title": "Rei Sakamoto earns U.S…", "title_full": "Rei Sakamoto earns U.S. Open spot, but beats his retiring hero Kei Nishikori to do it", "title_shortened": true, "url": "https://japantoday.com/category/sports/japanese%27s-rei-sakamoto-earns-a-us-open-spot-but-beats-his-retiring-hero-kei-nishikori-to-do-it", "posted_at": "2026-08-29T05:47:35+09:00", "posted_at_ms": 1787950055000, "summary": "Rei Sakamoto played his way into the U.S. Open — but only by taking the spot that Kei Nishikori, Japan's greatest men's tennis star, hoped to earn.", "summary_full": "Rei Sakamoto played his way into the U.S. Open — but only by taking the spot that Kei Nishikori, Japan's greatest men's tennis star, hoped to earn.", "collected_at": "2026-08-29T16:18:00+09:00"}, {"id": "s2_60828news069html", "source_id": "s2", "source": "ITmedia", "category": "IT", "title": "「Galaxy S26 FE」…", "title_full": "「Galaxy S26 FE」グローバル発表 撮影も編集もAIにお任せ 約11万円から", "title_shortened": true, "url": "https://www.itmedia.co.jp/mobile/articles/2608/28/news069.html", "posted_at": "2026-08-29T01:50:00+09:00", "posted_at_ms": 1787935800000, "summary": "Samsungが新スマートフォン「Galaxy S26 FE」を発表した。自動追跡機能「My FanCam」など充実したカメラ機能や編集機能を備える。", "summary_full": "Samsungが新スマートフォン「Galaxy S26 FE」を発表した。自動追跡機能「My FanCam」など充実したカメラ機能や編集機能を備える。", "collected_at": "2026-08-29T16:18:00+09:00"}, {"id": "s3_goprohero12black", "source_id": "s3", "source": "ライフハッカー・ジャパン", "category": "暮らし", "title": "うまく撮ろうとしなくても驚くほど「仕上がる」…", "title_full": "うまく撮ろうとしなくても驚くほど「仕上がる」。動画撮影のハードルを下げたGoProの使い方", "title_shortened": true, "url": "https://www.lifehacker.jp/article/2608-korekai-lht-gopro-hero12-black/", "posted_at": "2026-08-28T22:15:00+09:00", "posted_at_ms": 1787922900000, "summary": "2025年に買ったモノの中で、いちばん気持ちがワクワクしたモノはこれ！首かけ撮影、強力な手ブレ補正、超広角――「記録する楽しさ」を思い出させてくれたGoProの魅力を語ります。", "summary_full": "2025年に買ったモノの中で、いちばん気持ちがワクワクしたモノはこれ！首かけ撮影、強力な手ブレ補正、超広角――「記録する楽しさ」を思い出させてくれたGoProの魅力を語ります。", "collected_at": "2026-08-29T16:18:00+09:00"}, {"id": "s3_belecomtakujolly", "source_id": "s3", "source": "ライフハッカー・ジャパン", "category": "暮らし", "title": "横・縦どちらでも使える。USB扇風機でPCも自分…", "title_full": "横・縦どちらでも使える。USB扇風機でPCも自分もクールダウン", "title_shortened": true, "url": "https://www.lifehacker.jp/article/2608-amazon-usb-elecom-takujo-lly/", "posted_at": "2026-08-28T22:00:00+09:00", "posted_at_ms": 1787922000000, "summary": "気温もノートPCの内部温度もグッと上昇してくる季節です。そんな真夏の二重苦をクールダウンしてくれるのが、エレコムのUSB扇風機FAN‑U177BK。", "summary_full": "気温もノートPCの内部温度もグッと上昇してくる季節です。そんな真夏の二重苦をクールダウンしてくれるのが、エレコムのUSB扇風機FAN‑U177BK。", "collected_at": "2026-08-29T16:18:00+09:00"}, {"id": "s3_applewatchmatome", "source_id": "s3", "source": "ライフハッカー・ジャパン", "category": "暮らし", "title": "Apple Watchで「睡眠データ」…", "title_full": "Apple Watchで「睡眠データ」を使いこなす3つの方法", "title_shortened": true, "url": "https://www.lifehacker.jp/article/2608-apple-watch-matome/", "posted_at": "2026-08-28T21:45:00+09:00", "posted_at_ms": 1787921100000, "summary": "「Apple Watch、毎日着けているけど通知と運動記録くらいしか使っていないかも…」そんな方にこそ、ぜひ活用してほしいのが睡眠データの記録・分析機能です。", "summary_full": "「Apple Watch、毎日着けているけど通知と運動記録くらいしか使っていないかも…」そんな方にこそ、ぜひ活用してほしいのが睡眠データの記録・分析機能です。", "collected_at": "2026-08-29T16:18:00+09:00"}, {"id": "s3_salefes202608284", "source_id": "s3", "source": "ライフハッカー・ジャパン", "category": "暮らし", "title": "充電を気にせず動画漬け。Xiaomiの大容量タブ…", "title_full": "充電を気にせず動画漬け。Xiaomiの大容量タブレットが2.5万円切り", "title_shortened": true, "url": "https://www.lifehacker.jp/article/amazon-timesale-fes-2026-0828-4/", "posted_at": "2026-08-28T20:45:00+09:00", "posted_at_ms": 1787917500000, "summary": "充電を気にせず動画漬け。Xiaomiの大容量タブレットが2.5万円切り", "summary_full": "充電を気にせず動画漬け。Xiaomiの大容量タブレットが2.5万円切り", "collected_at": "2026-08-29T16:18:00+09:00"}]}
+
+</script>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ================= persistence helpers ================= */
+  function loadJSON(key, fallback){
+    try{
+      var raw = localStorage.getItem(key);
+      if(raw===null) return fallback;
+      var v = JSON.parse(raw);
+      return Array.isArray(v) ? v : fallback;
+    }catch(e){ return fallback; }
+  }
+  function saveJSON(key, val){
+    try{ localStorage.setItem(key, JSON.stringify(val)); }catch(e){}
+  }
+
+  /* ================= real curated data (collect_news.py output) ================= */
+  var CATS = ["経済","IT","暮らし","スポーツ","エンタメ","国際"];
+  var CAT_COLOR = {
+    "経済":["#2d6e71","#7fbdb9"], "IT":["#3b4a7a","#8b98d6"], "暮らし":["#5f7539","#a3bd6f"],
+    "スポーツ":["#b8642f","#e7a26a"], "エンタメ":["#8a4877","#c98cb4"], "国際":["#3c5d78","#8ab0c9"]
+  };
+
+  function thumbDataUri(cat, seedNum){
+    var c = CAT_COLOR[cat] || CAT_COLOR["経済"];
+    var angle = 30 + (seedNum*37)%80;
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200">'
+      + '<defs><linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%" gradientTransform="rotate('+angle+' .5 .5)">'
+      + '<stop offset="0%" stop-color="'+c[0]+'"/><stop offset="100%" stop-color="'+c[1]+'"/>'
+      + '</linearGradient></defs>'
+      + '<rect width="200" height="200" fill="url(#g)"/>'
+      + '<circle cx="'+(30+(seedNum*13)%140)+'" cy="'+(170-(seedNum*7)%100)+'" r="'+(50+(seedNum%3)*14)+'" fill="#ffffff" opacity="0.08"/>'
+      + '<text x="14" y="182" font-family="Georgia, serif" font-size="22" fill="#ffffff" opacity="0.85">'+cat.slice(0,2)+'</text>'
+      + '</svg>';
+    return 'data:image/svg+xml,' + encodeURIComponent(svg);
+  }
+  function hashStr(s){
+    var h=0;
+    for(var i=0;i<s.length;i++){ h=(h*31+s.charCodeAt(i))|0; }
+    return Math.abs(h);
+  }
+
+  /* collect_news.py が生成した実データを読み込む（このHTML内に埋め込み済み）。
+     ChatGPT等のAI要約は使用していないため、title/summaryは非AIの文字数短縮済み。 */
+  var CURATED = (function(){
+    try{ return JSON.parse(document.getElementById('curatedData').textContent); }
+    catch(e){ return {collected_at:null, sites:[], articles:[]}; }
+  })();
+  var COLLECTED_AT_MS = CURATED.collected_at ? Date.parse(CURATED.collected_at) : null;
+
+  var DEFAULT_SITES = (CURATED.sites||[]).map(function(s){
+    return { id:s.id, name:s.name, url:s.feed_url, category:s.category, addedAt: COLLECTED_AT_MS || Date.now() };
+  });
+  var sites = loadJSON('yn_sites', DEFAULT_SITES);
+
+  var ARTICLE_MAP = {};
+  var ARTICLES = (CURATED.articles||[]).map(function(a){
+    var obj = {
+      id: a.id,
+      cat: a.category,
+      source: a.source,
+      sourceId: a.source_id,
+      title: a.title,                 // collect_news.py で既に短縮済み（非AI）
+      titleFull: a.title_full,
+      titleShortened: !!a.title_shortened,
+      summary: a.summary,             // 同上（250字以内に短縮済み）
+      summaryFull: a.summary_full,
+      usedFallbackSummary: a.summary_full === a.title_full,  // 元記事に概要が無く、元タイトルで代用したケース
+      postedAt: a.posted_at_ms,
+      url: a.url,
+      thumb: thumbDataUri(a.category, hashStr(a.id))
+    };
+    ARTICLE_MAP[obj.id] = obj;
+    return obj;
+  });
+  ARTICLES.sort(function(a,b){ return b.postedAt-a.postedAt; });
+
+  /* ================= app persisted state ================= */
+  var clips = loadJSON('yn_clips', []);
+  var history = loadJSON('yn_history', []);
+
+  var SIX_MONTHS_MS = 183*24*3600*1000;
+  function pruneHistory(){
+    var cutoff = Date.now()-SIX_MONTHS_MS;
+    history = history.filter(function(h){ return h.viewedAt>=cutoff; });
+    saveJSON('yn_history', history);
+  }
+  pruneHistory();
+
+  /* ================= formatting ================= */
+  var dtFmtShort = new Intl.DateTimeFormat('ja-JP',{timeZone:'Asia/Tokyo', month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:false});
+  var dtFmtFull = new Intl.DateTimeFormat('ja-JP',{timeZone:'Asia/Tokyo', year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false});
+  function fmtShort(ms){ return dtFmtShort.format(new Date(ms)); }
+  function fmtFull(ms){ return dtFmtFull.format(new Date(ms)); }
+  function jstParts(){
+    var s = new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Tokyo', hour:'2-digit', minute:'2-digit', hour12:false}).format(new Date());
+    var p = s.split(':'); return {h:parseInt(p[0],10), m:parseInt(p[1],10)};
+  }
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+
+  /* ================= state ================= */
+  var state = {
+    tab:'feed',
+    feedPage:1,
+    historyPage:1,
+    clipPage:1,
+    detail:null,       // {article, cameFrom}
+    clipSelectMode:false,
+    selectedClips:{},
+    siteFormOpen:false,
+    siteFormError:'',
+    pendingDeleteSiteId:null
+  };
+  var FEED_PAGE_SIZE=20, FEED_MAX_PAGE=10;
+  var HIST_PAGE_SIZE=20;
+  var CLIP_PAGE_SIZE=20, CLIP_MAX_PAGE=50;
+
+  /* ================= dom refs ================= */
+  var $ = function(id){ return document.getElementById(id); };
+  var feedListEl = $('feedList');
+  var feedPagerEl = $('feedPager');
+  var feedForwardBtn = $('feedForwardBtn');
+  var feedBackBtn = $('feedBackBtn');
+  var feedPageIndicator = $('feedPageIndicator');
+  var nextRunEl = $('nextRun');
+  var historyListEl = $('historyList');
+  var clearHistoryBtn = $('clearHistoryBtn');
+  var clipListEl = $('clipList');
+  var clipSelectBtn = $('clipSelectBtn');
+  var clipDeleteBtn = $('clipDeleteBtn');
+  var sitesBodyEl = $('sitesBody');
+  var detailScreen = $('detailScreen');
+  var detailBody = $('detailBody');
+  var detailSrc = $('detailSrc');
+  var backHistoryStrip = $('backHistoryStrip');
+  var openSourceBtn = $('openSourceBtn');
+  var clipToggleBtn = $('clipToggleBtn');
+  var toastEl = $('toast');
+  var scrimEl = $('scrim');
+  var drawerEl = $('drawer');
+
+  function toast(msg){
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(function(){ toastEl.classList.remove('show'); }, 1900);
+  }
+
+  /* ================= feed ================= */
+  function renderFeed(){
+    var cap = Math.min(ARTICLES.length,200);
+    var maxPage = Math.min(FEED_MAX_PAGE, Math.max(1, Math.ceil(cap/FEED_PAGE_SIZE)));
+    if(state.feedPage>maxPage) state.feedPage=maxPage;
+    if(state.feedPage<1) state.feedPage=1;
+
+    var start=(state.feedPage-1)*FEED_PAGE_SIZE;
+    var pageItems = ARTICLES.slice(start, start+FEED_PAGE_SIZE);
+
+    var collectedLabel = COLLECTED_AT_MS ? fmtFull(COLLECTED_AT_MS) : '不明';
+    nextRunEl.innerHTML = '<span>収集日時(JST) <span class="num val">'+collectedLabel+'</span>・登録サイト <span class="num">'+sites.length+'</span>件</span><span class="val">collect_news.pyで取得（非AI）</span>';
+
+    if(pageItems.length===0){
+      feedListEl.innerHTML = ARTICLES.length===0
+        ? '<div class="empty"><div class="ic">📰</div><div>収集対象のサイトがありません<br>「サイト管理」タブから登録してください</div></div>'
+        : '<div class="empty"><div class="ic">📰</div><div>このページには記事がありません</div></div>';
+    } else {
+      feedListEl.innerHTML = pageItems.map(function(a){
+        var badge = a.titleShortened ? '<span class="badge">短縮</span>' : '';
+        return '<article class="card">'
+          + '<div class="thumb"><img src="'+a.thumb+'" alt="" loading="lazy"></div>'
+          + '<div class="body">'
+          + '<div class="src">'+escapeHtml(a.source)+'<span class="dot"></span>'+escapeHtml(a.cat)+'</div>'
+          + '<div class="title">'+escapeHtml(a.title)+badge+'</div>'
+          + '<div class="summary">'+escapeHtml(a.summary)+'</div>'
+          + '<div class="foot"><span class="posted num">'+fmtShort(a.postedAt)+'</span>'
+          + '<button class="detail-btn" data-open="'+a.id+'" data-from="feed">詳細</button></div>'
+          + '</div></article>';
+      }).join('');
+    }
+
+    feedPageIndicator.style.display='block';
+    feedPageIndicator.textContent = state.feedPage+' / '+FEED_MAX_PAGE;
+    feedBackBtn.disabled = state.feedPage<=1;
+    feedForwardBtn.disabled = state.feedPage>=maxPage;
+    feedListEl.scrollTop = 0;
+  }
+
+  function goFeedPage(n){
+    var cap = Math.min(ARTICLES.length,200);
+    var maxPage = Math.min(FEED_MAX_PAGE, Math.max(1, Math.ceil(cap/FEED_PAGE_SIZE)));
+    if(n<1 || n>maxPage) return;
+    state.feedPage = n;
+    renderFeed();
+  }
+
+  var wheelLocked=false;
+  function lockWheel(){ wheelLocked=true; setTimeout(function(){wheelLocked=false;}, 700); }
+  feedListEl.addEventListener('wheel', function(e){
+    if(wheelLocked) return;
+    var atTop = feedListEl.scrollTop<=1;
+    var atBottom = feedListEl.scrollTop+feedListEl.clientHeight >= feedListEl.scrollHeight-2;
+    if(e.deltaY>50 && atBottom){ goFeedPage(state.feedPage+1); lockWheel(); }
+    else if(e.deltaY<-50 && atTop){ goFeedPage(state.feedPage-1); lockWheel(); }
+  }, {passive:true});
+  var touchStartY=null;
+  feedListEl.addEventListener('touchstart', function(e){ touchStartY=e.touches[0].clientY; }, {passive:true});
+  feedListEl.addEventListener('touchend', function(e){
+    if(touchStartY===null || wheelLocked) return;
+    var dy = touchStartY - e.changedTouches[0].clientY;
+    var atTop = feedListEl.scrollTop<=1;
+    var atBottom = feedListEl.scrollTop+feedListEl.clientHeight >= feedListEl.scrollHeight-2;
+    if(dy>60 && atBottom){ goFeedPage(state.feedPage+1); lockWheel(); }
+    else if(dy<-60 && atTop){ goFeedPage(state.feedPage-1); lockWheel(); }
+    touchStartY=null;
+  }, {passive:true});
+  feedForwardBtn.addEventListener('click', function(){ goFeedPage(state.feedPage+1); });
+  feedBackBtn.addEventListener('click', function(){ goFeedPage(state.feedPage-1); });
+  feedListEl.addEventListener('click', function(e){
+    var btn = e.target.closest('[data-open]');
+    if(btn) openDetail(btn.getAttribute('data-open'), 'feed');
+  });
+
+  /* ================= history ================= */
+  function addHistory(article){
+    history.unshift({ hid:'h'+Date.now()+Math.floor(Math.random()*1000), articleId:article.id, title:article.title, viewedAt:Date.now() });
+    pruneHistory();
+    saveJSON('yn_history', history);
+  }
+  function renderHistory(){
+    clearHistoryBtn.style.display = history.length? 'inline-flex':'none';
+    if(history.length===0){
+      historyListEl.innerHTML = '<div class="empty"><div class="ic">◷</div><div>まだ閲覧履歴がありません<br>記事の詳細を開くとここに記録されます</div></div>';
+      return;
+    }
+    var totalPages = Math.max(1, Math.ceil(history.length/HIST_PAGE_SIZE));
+    if(state.historyPage>totalPages) state.historyPage=totalPages;
+    var start=(state.historyPage-1)*HIST_PAGE_SIZE;
+    var items = history.slice(start, start+HIST_PAGE_SIZE);
+    var rows = items.map(function(h){
+      var a = ARTICLE_MAP[h.articleId];
+      return '<div class="row">'
+        + '<div class="main">'
+        + '<button class="title-link" data-hopen="'+h.articleId+'">'+escapeHtml(h.title)+'</button>'
+        + '<div class="meta"><span>閲覧 '+fmtFull(h.viewedAt)+'</span>'+(a?'<span class="src">'+escapeHtml(a.source)+'</span>':'')+'</div>'
+        + '</div></div>';
+    }).join('');
+    var pager = '<div class="list-pager">'
+      + '<button data-hpage="'+(state.historyPage-1)+'" '+(state.historyPage<=1?'disabled':'')+'>‹</button>'
+      + '<span class="num">'+state.historyPage+' / '+totalPages+'</span>'
+      + '<button data-hpage="'+(state.historyPage+1)+'" '+(state.historyPage>=totalPages?'disabled':'')+'>›</button>'
+      + '</div>';
+    historyListEl.innerHTML = rows+pager;
+  }
+  historyListEl.addEventListener('click', function(e){
+    var open = e.target.closest('[data-hopen]');
+    if(open){ openDetail(open.getAttribute('data-hopen'), 'history'); return; }
+    var pg = e.target.closest('[data-hpage]');
+    if(pg && !pg.disabled){ state.historyPage=parseInt(pg.getAttribute('data-hpage'),10); renderHistory(); }
+  });
+  clearHistoryBtn.addEventListener('click', function(){
+    if(!history.length) return;
+    history=[]; saveJSON('yn_history', history); state.historyPage=1; renderHistory(); toast('閲覧履歴を削除しました');
+  });
+
+  /* ================= clip ================= */
+  function isClipped(id){ return clips.some(function(c){ return c.articleId===id; }); }
+  function addClip(article){
+    if(isClipped(article.id)) return false;
+    if(clips.length >= CLIP_MAX_PAGE*CLIP_PAGE_SIZE){ toast('clipの上限（'+ (CLIP_MAX_PAGE*CLIP_PAGE_SIZE) +'件）に達しています'); return false; }
+    clips.unshift({ cid:'c'+Date.now(), articleId:article.id, title:article.title, url:article.url, postedAt:article.postedAt, clippedAt:Date.now() });
+    saveJSON('yn_clips', clips);
+    return true;
+  }
+  function renderClip(){
+    var sorted = clips.slice().sort(function(a,b){ return b.postedAt-a.postedAt; });
+    clipDeleteBtn.style.display = state.clipSelectMode? 'inline-flex':'none';
+    clipSelectBtn.textContent = state.clipSelectMode? 'キャンセル':'選択';
+    if(sorted.length===0){
+      clipListEl.innerHTML = '<div class="empty"><div class="ic">☆</div><div>まだclipした記事がありません<br>記事詳細の「clipする」から追加できます</div></div>';
+      return;
+    }
+    var totalPages = Math.min(CLIP_MAX_PAGE, Math.max(1, Math.ceil(sorted.length/CLIP_PAGE_SIZE)));
+    if(state.clipPage>totalPages) state.clipPage=totalPages;
+    var start=(state.clipPage-1)*CLIP_PAGE_SIZE;
+    var items = sorted.slice(start, start+CLIP_PAGE_SIZE);
+    var rows = items.map(function(c){
+      var checked = !!state.selectedClips[c.cid];
+      return '<div class="row">'
+        + (state.clipSelectMode? '<button class="check'+(checked?' checked':'')+'" data-check="'+c.cid+'">'+(checked?'✓':'')+'</button>' : '')
+        + '<div class="main">'
+        + '<button class="title-link" data-cliptap="'+c.cid+'">'+escapeHtml(c.title)+'</button>'
+        + '<div class="meta"><span>投稿 '+fmtShort(c.postedAt)+'</span><span>clip '+fmtShort(c.clippedAt)+'</span></div>'
+        + '</div></div>';
+    }).join('');
+    var pager = '<div class="list-pager">'
+      + '<button data-cpage="'+(state.clipPage-1)+'" '+(state.clipPage<=1?'disabled':'')+'>‹</button>'
+      + '<span class="num">'+state.clipPage+' / '+totalPages+'</span>'
+      + '<button data-cpage="'+(state.clipPage+1)+'" '+(state.clipPage>=totalPages?'disabled':'')+'>›</button>'
+      + '</div>';
+    clipListEl.innerHTML = rows+pager;
+  }
+  clipListEl.addEventListener('click', function(e){
+    var tap = e.target.closest('[data-cliptap]');
+    if(tap){
+      if(state.clipSelectMode){
+        toggleClipCheck(tap.getAttribute('data-cliptap'));
+      } else {
+        var c = clips.find(function(x){ return x.cid===tap.getAttribute('data-cliptap'); });
+        if(c) window.open(c.url, '_blank', 'noopener');
+      }
+      return;
+    }
+    var chk = e.target.closest('[data-check]');
+    if(chk){ toggleClipCheck(chk.getAttribute('data-check')); return; }
+    var pg = e.target.closest('[data-cpage]');
+    if(pg && !pg.disabled){ state.clipPage=parseInt(pg.getAttribute('data-cpage'),10); renderClip(); }
+  });
+  function toggleClipCheck(cid){
+    if(state.selectedClips[cid]) delete state.selectedClips[cid];
+    else state.selectedClips[cid]=true;
+    renderClip();
+  }
+  clipSelectBtn.addEventListener('click', function(){
+    state.clipSelectMode = !state.clipSelectMode;
+    state.selectedClips = {};
+    renderClip();
+  });
+  clipDeleteBtn.addEventListener('click', function(){
+    var ids = Object.keys(state.selectedClips);
+    if(!ids.length){ toast('削除する記事を選択してください'); return; }
+    clips = clips.filter(function(c){ return !state.selectedClips[c.cid]; });
+    saveJSON('yn_clips', clips);
+    state.selectedClips={}; state.clipSelectMode=false;
+    renderClip();
+    toast(ids.length+'件のclipを解除しました');
+  });
+
+  /* ================= sites (admin) ================= */
+  function urlIsValid(u){ return /^https?:\/\/\S+$/i.test(u); }
+  function renderSites(){
+    var parts = [];
+    parts.push('<p class="site-count">収集対象として登録中のサイト：<span class="num">'+sites.length+'</span> 件</p>');
+
+    if(state.siteFormOpen){
+      var catOptions = CATS.map(function(c){ return '<option value="'+c+'">'+c+'</option>'; }).join('');
+      parts.push(
+        '<div class="add-panel">'
+        + '<div class="field-group"><label>表示名</label><input id="siteNameInput" type="text" placeholder="例：夕焼け新聞" maxlength="30"></div>'
+        + '<div class="field-group"><label>フィード / サイトURL</label><input id="siteUrlInput" type="text" placeholder="https://example.com/feed.xml"></div>'
+        + '<div class="field-group"><label>カテゴリ</label><select id="siteCatSelect">'+catOptions+'</select></div>'
+        + '<div class="field-err" id="siteFormErr">'+(state.siteFormError? escapeHtml(state.siteFormError):'')+'</div>'
+        + '<div class="actions"><button class="btn ghost" id="siteCancelBtn">キャンセル</button><button class="btn primary" id="siteSubmitBtn">登録する</button></div>'
+        + '</div>'
+      );
+    }
+
+    if(sites.length===0){
+      parts.push('<div class="empty"><div class="ic">⚙</div><div>収集対象のサイトが登録されていません<br>右上の「+ 追加」から登録してください</div></div>');
+    } else {
+      sites.slice().sort(function(a,b){ return b.addedAt-a.addedAt; }).forEach(function(s){
+        var col = (CAT_COLOR[s.category]||CAT_COLOR["経済"])[0];
+        var pendingClass = state.pendingDeleteSiteId===s.id ? ' confirm' : '';
+        var delLabel = state.pendingDeleteSiteId===s.id ? '本当に削除？' : '削除';
+        parts.push(
+          '<div class="site-row">'
+          + '<div class="swatch" style="background:'+col+';"></div>'
+          + '<div class="info">'
+          + '<div class="name-row"><span class="name">'+escapeHtml(s.name)+'</span><span class="cat-badge">'+escapeHtml(s.category)+'</span></div>'
+          + '<div class="url">'+escapeHtml(s.url)+'</div>'
+          + '<div class="meta2">登録日 '+fmtFull(s.addedAt)+'</div>'
+          + '</div>'
+          + '<button class="del-btn'+pendingClass+'" data-del-site="'+s.id+'">'+delLabel+'</button>'
+          + '</div>'
+        );
+      });
+    }
+    sitesBodyEl.innerHTML = parts.join('');
+  }
+  function openSiteForm(){ state.siteFormOpen=true; state.siteFormError=''; renderSites(); }
+  function closeSiteForm(){ state.siteFormOpen=false; state.siteFormError=''; renderSites(); }
+  function setSiteFormError(msg){
+    state.siteFormError = msg;
+    var el = document.getElementById('siteFormErr');
+    if(el) el.textContent = msg; // update in place so already-typed fields are not wiped
+  }
+  function addSite(name, url, category){
+    name = (name||'').trim();
+    url = (url||'').trim();
+    if(!name){ setSiteFormError('表示名を入力してください。'); return; }
+    if(!urlIsValid(url)){ setSiteFormError('URLは http:// または https:// で始まる形式で入力してください。'); return; }
+    var dup = sites.some(function(s){ return s.url.toLowerCase()===url.toLowerCase(); });
+    if(dup){ setSiteFormError('そのURLはすでに登録されています。'); return; }
+    var site = { id:'s'+Date.now(), name:name, url:url, category:category||CATS[0], addedAt:Date.now() };
+    sites.push(site);
+    saveJSON('yn_sites', sites);
+    // このページ単体では実際のRSS取得はできない（ブラウザからの外部fetchは行っていない）ため、
+    // ここでは登録のみ行う。記事を反映するには collect_news.py の SITES にも追加して再実行し、
+    // 生成された curated_articles.json でこのページのデータを更新する必要がある。
+    state.siteFormOpen=false; state.siteFormError='';
+    renderSites();
+    toast('「'+name+'」を登録しました（記事の反映にはcollect_news.pyへの追加・再実行が必要です）');
+  }
+  function deleteSite(id){
+    var site = sites.find(function(s){ return s.id===id; });
+    if(!site) return;
+    sites = sites.filter(function(s){ return s.id!==id; });
+    saveJSON('yn_sites', sites);
+    ARTICLES = ARTICLES.filter(function(a){ return a.sourceId!==id; });
+    state.pendingDeleteSiteId=null;
+    renderSites();
+    if(state.tab==='feed') renderFeed();
+    toast('「'+site.name+'」の登録を削除しました');
+  }
+  $('siteAddToggleBtn').addEventListener('click', function(){
+    if(state.siteFormOpen) closeSiteForm(); else openSiteForm();
+  });
+  sitesBodyEl.addEventListener('click', function(e){
+    if(e.target.id==='siteCancelBtn'){ closeSiteForm(); return; }
+    if(e.target.id==='siteSubmitBtn'){
+      addSite($('siteNameInput').value, $('siteUrlInput').value, $('siteCatSelect').value);
+      return;
+    }
+    var del = e.target.closest('[data-del-site]');
+    if(del){
+      var id = del.getAttribute('data-del-site');
+      if(state.pendingDeleteSiteId===id){ deleteSite(id); }
+      else { state.pendingDeleteSiteId=id; renderSites(); }
+    }
+  });
+
+  /* ================= detail ================= */
+  function openDetail(articleId, cameFrom){
+    var a = ARTICLE_MAP[articleId];
+    if(!a) return;
+    addHistory(a);
+    if(state.tab==='history') renderHistory();
+    state.detail = {article:a, cameFrom:cameFrom};
+    renderDetail();
+    detailScreen.classList.add('open');
+  }
+  function closeDetail(){
+    detailScreen.classList.remove('open');
+    state.detail=null;
+  }
+  function renderDetail(){
+    var a = state.detail.article;
+    detailSrc.textContent = a.source;
+    var titleBadge = a.titleShortened ? '<span class="badge">短縮</span>' : '';
+    var sumBadge = a.usedFallbackSummary
+      ? '<span class="badge warn" style="margin-left:4px;">概要取得不可・元タイトル表示</span>'
+      : '<span class="badge" style="margin-left:4px;">短縮 250字</span>';
+    detailBody.innerHTML =
+      '<div class="thumb"><img src="'+a.thumb+'" alt=""></div>'
+      + '<h1>'+escapeHtml(a.title)+titleBadge+'</h1>'
+      + '<div class="meta-row"><span>'+escapeHtml(a.cat)+'</span><span>·</span><span class="num">'+fmtFull(a.postedAt)+'</span></div>'
+      + '<div class="sum-label">記事概要'+sumBadge+'</div>'
+      + '<div class="summary-text">'+escapeHtml(a.summary)+'</div>';
+    var clipped = isClipped(a.id);
+    clipToggleBtn.innerHTML = clipped? '★ clip済み' : '☆ clipする';
+    clipToggleBtn.classList.toggle('active', clipped);
+    backHistoryStrip.style.display = state.detail.cameFrom==='history' ? 'flex' : 'none';
+  }
+  $('detailBackBtn').addEventListener('click', closeDetail);
+  backHistoryStrip.addEventListener('click', function(){ closeDetail(); setTab('history'); });
+  openSourceBtn.addEventListener('click', function(){
+    if(!state.detail) return;
+    window.open(state.detail.article.url, '_blank', 'noopener');
+  });
+  clipToggleBtn.addEventListener('click', function(){
+    if(!state.detail) return;
+    var a = state.detail.article;
+    if(isClipped(a.id)){ toast('この記事はすでにclip済みです（解除はクリップ画面から）'); return; }
+    if(addClip(a)){ renderDetail(); if(state.tab==='clip') renderClip(); toast('clipに追加しました'); }
+  });
+
+  /* ================= tabs ================= */
+  function setTab(tab){
+    state.tab = tab;
+    document.querySelectorAll('.screen[data-screen]').forEach(function(s){
+      s.classList.toggle('active', s.getAttribute('data-screen')===tab);
+    });
+    document.querySelectorAll('.tab').forEach(function(b){
+      b.classList.toggle('on', b.getAttribute('data-tab')===tab);
+    });
+    feedPagerEl.style.display = tab==='feed' ? 'flex':'none';
+    if(tab==='feed') renderFeed();
+    if(tab==='history') renderHistory();
+    if(tab==='clip') renderClip();
+    if(tab==='sites'){ state.pendingDeleteSiteId=null; renderSites(); }
+  }
+  document.querySelectorAll('.tab').forEach(function(b){
+    b.addEventListener('click', function(){ setTab(b.getAttribute('data-tab')); });
+  });
+
+  /* ================= info drawer ================= */
+  $('infoBtn').addEventListener('click', function(){ scrimEl.classList.add('open'); drawerEl.classList.add('open'); });
+  function closeDrawer(){ scrimEl.classList.remove('open'); drawerEl.classList.remove('open'); }
+  $('closeDrawerBtn').addEventListener('click', closeDrawer);
+  scrimEl.addEventListener('click', closeDrawer);
+
+  /* ================= clock ================= */
+  function tickClock(){
+    var p = jstParts();
+    $('jstClock').textContent = String(p.h).padStart(2,'0')+':'+String(p.m).padStart(2,'0');
+  }
+  tickClock();
+  setInterval(tickClock, 15000);
+
+  /* ================= init ================= */
+  setTab('feed');
+})();
+</script>
+
+</body>
+</html>
