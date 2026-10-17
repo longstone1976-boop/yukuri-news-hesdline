@@ -42,3 +42,10 @@ CREATE TABLE IF NOT EXISTS feed_items (
   article_id    INTEGER NOT NULL REFERENCES articles(article_id) ON DELETE CASCADE,
   PRIMARY KEY (collection_id, position)
 );
+
+-- 見出しも再要約の対象にする（2.3）。既存の表に列を追加
+ALTER TABLE articles ADD COLUMN IF NOT EXISTS title_status TEXT NOT NULL DEFAULT 'done'; -- done / pending / final
+ALTER TABLE articles ADD COLUMN IF NOT EXISTS title_retry INTEGER NOT NULL DEFAULT 0;
+-- 列を追加する前に「先頭24文字＋…」で保存された見出しを、再要約の対象にする
+UPDATE articles SET title_status = 'pending'
+ WHERE title_status = 'done' AND title_retry = 0 AND char_length(title_original) > 25 AND title LIKE '%…';

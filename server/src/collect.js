@@ -35,10 +35,11 @@ async function processNewArticle(siteId, item, collectedAt) {
 
   let title = titleOriginal;
   let summary, summaryStatus, summarySource, keepSource = null;
+  let titleStatus = 'done';
 
   if (needTitle || needSummary) {
     const r = await summarize({ title: titleOriginal, needTitle, sourceText, needSummary });
-    if (needTitle) title = r.title || truncateTitle(titleOriginal);
+    if (needTitle) { title = r.title || truncateTitle(titleOriginal); if (!r.title) titleStatus = 'pending'; }
     if (r.titleError) log('見出しの要約に失敗:', url, r.titleError);
     if (needSummary) {
       if (r.summary) {
@@ -58,40 +59,58 @@ async function processNewArticle(siteId, item, collectedAt) {
 
   const postedAt = item.postedAt || collectedAt;
   const { rows } = await pool.query(
-    `INSERT INTO articles (url, site_id, title, title_original, summary, summary_status, summary_source, source_text,
+    `INSERT INTO articles (url, site_id, title, title_original, title_status, summary, summary_status, summary_source, source_text,
        rss_description, og_description, thumbnail_url, posted_at, posted_at_estimated, collected_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+     VALUES ($1,$2,$3,$4,$15,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
      ON CONFLICT (url) DO NOTHING
      RETURNING article_id`,
     [url, siteId, title, titleOriginal, summary, summaryStatus, summarySource, keepSource,
-      rssDesc, page.ogDescription, thumbnail, postedAt, !item.postedAt, collectedAt],
+      rssDesc, page.ogDescription, thumbnail, postedAt, !item.postedAt, collectedAt, titleStatus],
   );
   return rows[0]?.article_id ?? null;
 }
 
 /** 要約未完了の記事を再要約する（収集の対象期間から外れていても行う。最大2回） */
 async function retryPending(skipIds) {
+  // 要約未完了の見出し・概要を再要約する（どちらも最大2回。収集の対象期間から外れていても行う）
   const { rows } = await pool.query(
-    `SELECT article_id, url, title_original, source_text, summary_retry FROM articles
-      WHERE summary_status = 'pending' AND NOT (article_id = ANY($1::int[]))`,
+    `SELECT article_id, url, title_original, source_text, summary_status, summary_retry, title_status, title_retry FROM articles
+      WHERE (summary_status = 'pending' OR title_status = 'pending') AND NOT (article_id = ANY($1::int[]))`,
     [skipIds],
   );
   for (const a of rows) {
     if (isQuotaExhausted()) break; // 1日の上限に達したら、回数を数えずに次の収集へ回す
-    const r = await summarize({ title: a.title_original, needTitle: false, sourceText: a.source_text || '', needSummary: true });
-    if (!r.summary && isQuotaExhausted()) break;
-    const retry = a.summary_retry + 1;
-    if (r.summary) {
-      await pool.query(
-        `UPDATE articles SET summary=$2, summary_status='done', summary_source='ai', summary_retry=$3, source_text=NULL WHERE article_id=$1`,
-        [a.article_id, r.summary, retry],
-      );
-      log('再要約に成功:', a.url);
-    } else if (retry >= MAX_RETRY) {
-      await pool.query(`UPDATE articles SET summary_status='final', summary_retry=$2, source_text=NULL WHERE article_id=$1`, [a.article_id, retry]);
-      log('再要約を2回失敗したため、代わりの概要で確定:', a.url);
-    } else {
-      await pool.query(`UPDATE articles SET summary_retry=$2 WHERE article_id=$1`, [a.article_id, retry]);
+    const needTitle = a.title_status === 'pending';
+    const needSummary = a.summary_status === 'pending';
+    const r = await summarize({ title: a.title_original, needTitle, sourceText: a.source_text || '', needSummary });
+    if (isQuotaExhausted() && ((needTitle && !r.title) || (needSummary && !r.summary))) break;
+
+    if (needTitle) {
+      const retry = a.title_retry + 1;
+      if (r.title) {
+        await pool.query(`UPDATE articles SET title=$2, title_status='done', title_retry=$3 WHERE article_id=$1`, [a.article_id, r.title, retry]);
+        log('見出しの再要約に成功:', a.url);
+      } else if (retry >= MAX_RETRY) {
+        await pool.query(`UPDATE articles SET title_status='final', title_retry=$2 WHERE article_id=$1`, [a.article_id, retry]);
+        log('見出しの再要約を2回失敗したため、先頭24文字＋…で確定:', a.url);
+      } else {
+        await pool.query(`UPDATE articles SET title_retry=$2 WHERE article_id=$1`, [a.article_id, retry]);
+      }
+    }
+    if (needSummary) {
+      const retry = a.summary_retry + 1;
+      if (r.summary) {
+        await pool.query(
+          `UPDATE articles SET summary=$2, summary_status='done', summary_source='ai', summary_retry=$3, source_text=NULL WHERE article_id=$1`,
+          [a.article_id, r.summary, retry],
+        );
+        log('概要の再要約に成功:', a.url);
+      } else if (retry >= MAX_RETRY) {
+        await pool.query(`UPDATE articles SET summary_status='final', summary_retry=$2, source_text=NULL WHERE article_id=$1`, [a.article_id, retry]);
+        log('概要の再要約を2回失敗したため、代わりの概要で確定:', a.url);
+      } else {
+        await pool.query(`UPDATE articles SET summary_retry=$2 WHERE article_id=$1`, [a.article_id, retry]);
+      }
     }
   }
 }
@@ -182,7 +201,7 @@ export async function runCollection() {
 
     // 一覧から外れて24時間が過ぎた記事を削除（3.2。閲覧履歴の機能は今回の範囲外）
     const { rowCount: removed } = await pool.query(
-      `DELETE FROM articles WHERE summary_status <> 'pending'
+      `DELETE FROM articles WHERE summary_status <> 'pending' AND title_status <> 'pending'
          AND COALESCE(last_listed_at, collected_at) < now() - interval '24 hours'
          AND article_id NOT IN (SELECT article_id FROM feed_items)`,
     );
