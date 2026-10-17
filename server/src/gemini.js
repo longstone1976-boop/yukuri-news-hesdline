@@ -5,19 +5,56 @@ const API_KEY = process.env.GEMINI_API_KEY;
 const MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
 const BASE = process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta';
 const TIMEOUT_MS = 30_000; // 30秒以内に応答がなければ失敗（2.3）
-const MIN_INTERVAL_MS = Number(process.env.GEMINI_MIN_INTERVAL_MS || 1000);
+// 無料枠は「1分あたりの回数」が少ないため、初期値は4秒に1回（1分に15回）にする
+const MIN_INTERVAL_MS = Number(process.env.GEMINI_MIN_INTERVAL_MS || 4000);
+const MAX_ATTEMPTS = 3;          // 混雑（503）・回数超過（429）のときは最大3回まで試す
+const MAX_WAIT_MS = 60_000;
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let last = 0;
 async function pace() {
   const wait = last + MIN_INTERVAL_MS - Date.now();
-  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  if (wait > 0) await sleep(wait);
   last = Date.now();
 }
 
 export class GeminiError extends Error {}
 
+// 1日の上限に達したら、この収集の間はもう呼ばない（残りは「要約未完了」にして次の収集で再要約）
+let dailyQuotaHitAt = 0;
+export function resetQuotaFlag() { dailyQuotaHitAt = 0; }
+export const isQuotaExhausted = () => !!dailyQuotaHitAt;
+
+function retryDelayMs(body, attempt) {
+  const m = body.match(/"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/);
+  const ms = m ? Math.ceil(Number(m[1]) * 1000) + 500 : 15_000 * attempt;
+  return Math.min(ms, MAX_WAIT_MS);
+}
+
 async function generate(prompt) {
   if (!API_KEY) throw new GeminiError('GEMINI_API_KEY が設定されていません');
+  if (dailyQuotaHitAt) throw new GeminiError('Gemini の1日の利用上限に達しているため、次の収集で再要約します');
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await callOnce(prompt);
+    } catch (e) {
+      const status = e.status;
+      if (status === 429 && /PerDay|per day/i.test(e.body || '')) {
+        dailyQuotaHitAt = Date.now();
+        throw new GeminiError(`Gemini の1日の利用上限に達しました（429）: ${e.message}`);
+      }
+      if ((status === 429 || status === 503 || status === 500) && attempt < MAX_ATTEMPTS) {
+        const wait = retryDelayMs(e.body || '', attempt);
+        console.log(`[gemini] ${status} のため ${Math.round(wait / 1000)} 秒待って再試行（${attempt + 1}/${MAX_ATTEMPTS}回目）`);
+        await sleep(wait);
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+
+async function callOnce(prompt) {
   await pace();
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
@@ -32,7 +69,14 @@ async function generate(prompt) {
       signal: ctrl.signal,
     });
     const body = await res.text();
-    if (!res.ok) throw new GeminiError(`Gemini API エラー ${res.status}: ${body.slice(0, 300)}`);
+    if (!res.ok) {
+      let msg = body;
+      try { msg = JSON.parse(body).error?.message || body; } catch { /* JSONでない */ }
+      const err = new GeminiError(`Gemini API エラー ${res.status}: ${String(msg).replace(/\s+/g, ' ').slice(0, 600)}`);
+      err.status = res.status;
+      err.body = body;
+      throw err;
+    }
     const data = JSON.parse(body);
     const text = (data.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('').trim();
     if (!text) throw new GeminiError('Gemini の応答が空でした');

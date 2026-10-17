@@ -1,6 +1,6 @@
 import { pool } from './db.js';
 import { loadFeed, readArticlePage, rssImage } from './fetchers.js';
-import { summarize } from './gemini.js';
+import { summarize, resetQuotaFlag, isQuotaExhausted } from './gemini.js';
 import { len, stripHtml, truncateTitle, truncateSummary, NO_SUMMARY, TITLE_MAX, SUMMARY_MAX } from './text.js';
 
 const PER_SITE = 20;          // サイトごとに最新20件（3.2）
@@ -77,7 +77,9 @@ async function retryPending(skipIds) {
     [skipIds],
   );
   for (const a of rows) {
+    if (isQuotaExhausted()) break; // 1日の上限に達したら、回数を数えずに次の収集へ回す
     const r = await summarize({ title: a.title_original, needTitle: false, sourceText: a.source_text || '', needSummary: true });
+    if (!r.summary && isQuotaExhausted()) break;
     const retry = a.summary_retry + 1;
     if (r.summary) {
       await pool.query(
@@ -118,6 +120,7 @@ export async function runCollection() {
 
   const { rows: c } = await pool.query(`INSERT INTO collections DEFAULT VALUES RETURNING collection_id, started_at`);
   const collectionId = c[0].collection_id;
+  resetQuotaFlag();
   const collectedAt = c[0].started_at;
   const notes = [];
   try {
