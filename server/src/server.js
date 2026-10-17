@@ -20,19 +20,55 @@ const app = express();
 app.disable('x-powered-by');
 app.use(express.urlencoded({ extended: false }));
 
-// --- ログイン機能は今回の範囲外のため、サイト全体を Basic 認証で保護する ---
+// --- ログイン画面（管理者1人。ユーザー名・パスワードは環境変数） ---
+// ログイン状態は署名付きCookieで保持する。最後に操作してから30日で切れる（仕様書 9.3）
+const SESSION_DAYS = 30;
+const COOKIE = 'yn_session';
+// パスワードを変えると、それまでのログイン状態はすべて無効になる
+const SECRET = crypto.createHash('sha256').update(`${process.env.SESSION_SECRET || ''}:${APP_USER}:${APP_PASSWORD}`).digest();
+
 function safeEq(a, b) {
   const x = Buffer.from(String(a)), y = Buffer.from(String(b));
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 }
+const sign = (v) => crypto.createHmac('sha256', SECRET).update(v).digest('base64url');
+function makeToken() {
+  const v = `${Buffer.from(APP_USER).toString('base64url')}.${Date.now() + SESSION_DAYS * 86400_000}`;
+  return `${v}.${sign(v)}`;
+}
+function validToken(t) {
+  const parts = String(t || '').split('.');
+  if (parts.length !== 3) return false;
+  const v = `${parts[0]}.${parts[1]}`;
+  return safeEq(parts[2], sign(v)) && Number(parts[1]) > Date.now();
+}
+function readCookie(req, name) {
+  for (const c of (req.headers.cookie || '').split(';')) {
+    const [k, ...v] = c.trim().split('=');
+    if (k === name) return decodeURIComponent(v.join('='));
+  }
+  return null;
+}
+function setSession(req, res) {
+  const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
+  res.append('Set-Cookie', `${COOKIE}=${makeToken()}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_DAYS * 86400}${secure ? '; Secure' : ''}`);
+}
+const clearSession = (res) => res.append('Set-Cookie', `${COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+const safeNext = (n) => (typeof n === 'string' && /^\/(?!\/)/.test(n) ? n : '/');
+
+// ログイン失敗：同じユーザー名で5回続けて失敗したら15分間止める（仕様書 9.3）
+const fails = new Map();
+const LOCK_MS = 15 * 60_000;
+
 app.get('/healthz', (_req, res) => res.send('ok'));
 app.use((req, res, next) => {
-  const [type, value] = (req.headers.authorization || '').split(' ');
-  if (type === 'Basic' && value) {
-    const [u, ...rest] = Buffer.from(value, 'base64').toString('utf8').split(':');
-    if (safeEq(u, APP_USER) && safeEq(rest.join(':'), APP_PASSWORD)) return next();
+  if (req.path === '/login') return next();
+  if (validToken(readCookie(req, COOKIE))) {
+    if (req.method === 'GET') setSession(req, res); // 操作するたびに30日を延長
+    return next();
   }
-  res.set('WWW-Authenticate', 'Basic realm="yukkuri-news", charset="UTF-8"').status(401).send('認証が必要です');
+  if (req.method === 'GET') return res.redirect(303, `/login?next=${encodeURIComponent(req.originalUrl)}`);
+  res.status(401).send('ログインが必要です');
 });
 // 別サイトからのフォーム送信を受け付けない
 app.use((req, res, next) => {
@@ -62,6 +98,10 @@ header{background:var(--dark);color:#fff}
 .logo{font-size:24px;font-weight:700;color:#fff;text-decoration:none}
 nav{display:flex;gap:6px;flex-wrap:wrap}nav a{color:#fff;border:1px solid rgba(255,255,255,.4);border-radius:8px;padding:10px 14px;text-decoration:none;min-height:44px;display:inline-flex;align-items:center}
 nav a.on{background:#fff;color:var(--dark);font-weight:700}
+.navbtn{color:#fff;background:transparent;border:1px solid rgba(255,255,255,.4);border-radius:8px;padding:0 14px;min-height:44px;font:inherit;cursor:pointer}
+.navbtn:hover{background:rgba(255,255,255,.12)}
+.login{max-width:420px;margin:40px auto;padding:28px;display:flex;flex-direction:column;gap:16px}
+.login label{display:flex;flex-direction:column;gap:6px;font-size:14px;font-weight:700}
 main{max-width:1040px;margin:0 auto;padding:24px 20px 120px}
 .card{background:#fff;border:1px solid var(--line);border-radius:12px}
 .item{padding:16px;display:flex;flex-wrap:wrap;gap:16px;margin-bottom:12px}
@@ -88,8 +128,9 @@ table{border-collapse:collapse;width:100%}td,th{padding:8px 10px;border-bottom:1
 `;
 
 function layout(title, active, inner) {
-  const nav = [['/', 'ニュース', 'field'], ['/admin', '収集元URL・収集', 'admin']]
-    .map(([href, label, key]) => `<a href="${href}" class="${active === key ? 'on' : ''}">${label}</a>`).join('');
+  const nav = active === 'login' ? '' : [['/', 'ニュース', 'field'], ['/admin', '収集元URL・収集', 'admin']]
+    .map(([href, label, key]) => `<a href="${href}" class="${active === key ? 'on' : ''}">${label}</a>`).join('')
+    + '<form method="post" action="/logout" style="margin:0"><button class="navbtn" type="submit">ログアウト</button></form>';
   return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${h(title)}｜ゆっくりNEWS</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;700&display=swap" rel="stylesheet">
@@ -106,6 +147,44 @@ async function lastCollection() {
 const thumbHtml = (url) => url
   ? `<img class="thumb" src="${h(url)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.outerHTML='<div class=&quot;noimg&quot;>No Image</div>'">`
   : '<div class="noimg">No Image</div>';
+
+// ログイン画面
+function loginPage(next, error) {
+  return layout('ログイン', 'login', `<form class="card login" method="post" action="/login">
+    <h1 style="margin:0">ログイン</h1>
+    <input type="hidden" name="next" value="${h(next)}">
+    <label>ユーザー名<input class="inp" name="user" autocomplete="username" required autofocus></label>
+    <label>パスワード<input class="inp" type="password" name="password" autocomplete="current-password" required></label>
+    ${error ? `<div class="err" role="alert">${h(error)}</div>` : ''}
+    <button class="btn" type="submit" style="justify-content:center">ログイン</button>
+  </form>`);
+}
+app.get('/login', (req, res) => {
+  if (validToken(readCookie(req, COOKIE))) return res.redirect(303, safeNext(req.query.next));
+  res.send(loginPage(safeNext(req.query.next), ''));
+});
+app.post('/login', (req, res) => {
+  const user = String(req.body.user || '').trim();
+  const next = safeNext(req.body.next);
+  const f = fails.get(user) || { n: 0, until: 0 };
+  if (f.until > Date.now()) {
+    return res.status(429).send(loginPage(next, 'ログインが一時的に停止されています。15分ほど待ってから、もう一度お試しください。'));
+  }
+  if (safeEq(user, APP_USER) && safeEq(String(req.body.password || ''), APP_PASSWORD)) {
+    fails.delete(user);
+    setSession(req, res);
+    return res.redirect(303, next);
+  }
+  const n = f.n + 1;
+  fails.set(user, n >= 5 ? { n: 0, until: Date.now() + LOCK_MS } : { n, until: 0 });
+  res.status(401).send(loginPage(next, n >= 5
+    ? '5回続けて失敗したため、ログインを15分間停止しました。'
+    : 'ユーザー名またはパスワードが正しくありません'));
+});
+app.post('/logout', (_req, res) => {
+  clearSession(res);
+  res.redirect(303, '/login');
+});
 
 // ニュースフィールド画面（4章）
 app.get('/', async (req, res, next) => {
