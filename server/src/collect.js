@@ -143,10 +143,14 @@ export async function runCollection() {
   const collectedAt = c[0].started_at;
   const notes = [];
   try {
-    const { rows: sites } = await pool.query('SELECT site_id, name, feed_url FROM sites ORDER BY site_id');
+    // 1人以上のユーザーが登録しているサイトだけを、1回ずつ収集する（8.4）
+    const { rows: sites } = await pool.query(
+      `SELECT s.site_id, s.name, s.feed_url FROM sites s
+        WHERE EXISTS (SELECT 1 FROM user_sites us JOIN users u USING (user_id) WHERE us.site_id = s.site_id AND u.status = 'active')
+        ORDER BY s.site_id`);
     const since = Date.now() - WINDOW_MS;
     const seen = new Set();
-    const bySite = [];
+    const bySite = new Map(); // site_id → その回に集めた記事
     const touched = [];
 
     for (const site of sites) {
@@ -184,31 +188,48 @@ export async function runCollection() {
         }
         list.push({ id, posted });
       }
-      bySite.push(list);
+      bySite.set(site.site_id, list);
     }
 
     await retryPending(touched);
 
-    const picked = selectRoundRobin(bySite);
+    // ユーザーごとに、そのユーザーが登録したサイトの記事だけで一覧を作り直す（3.2）
+    const { rows: members } = await pool.query(
+      `SELECT us.user_id, array_agg(us.site_id) AS site_ids FROM user_sites us JOIN users u USING (user_id)
+        WHERE u.status = 'active' GROUP BY us.user_id`);
+    const listedIds = new Set();
+    let listedTotal = 0;
     // 一覧の作り直しは1つのトランザクションで行う（途中で一覧が空にならないように）
     await client.query('BEGIN');
-    await client.query('DELETE FROM feed_items');
-    for (let i = 0; i < picked.length; i++) {
-      await client.query('INSERT INTO feed_items (collection_id, position, article_id) VALUES ($1,$2,$3)', [collectionId, i + 1, picked[i].id]);
+    await client.query('DELETE FROM user_feed_items');
+    for (const m of members) {
+      const picked = selectRoundRobin(m.site_ids.map((id) => bySite.get(id) || []));
+      for (let i = 0; i < picked.length; i++) {
+        await client.query('INSERT INTO user_feed_items (user_id, position, article_id, collection_id) VALUES ($1,$2,$3,$4)',
+          [m.user_id, i + 1, picked[i].id, collectionId]);
+        listedIds.add(picked[i].id);
+      }
+      listedTotal += picked.length;
     }
-    await client.query('UPDATE articles SET last_listed_at = now() WHERE article_id = ANY($1::int[])', [picked.map((p) => p.id)]);
+    await client.query('UPDATE articles SET last_listed_at = now() WHERE article_id = ANY($1::int[])', [[...listedIds]]);
     await client.query('COMMIT');
 
     // 一覧から外れて24時間が過ぎた記事を削除（3.2。閲覧履歴の機能は今回の範囲外）
     const { rowCount: removed } = await pool.query(
       `DELETE FROM articles WHERE summary_status <> 'pending' AND title_status <> 'pending'
          AND COALESCE(last_listed_at, collected_at) < now() - interval '24 hours'
-         AND article_id NOT IN (SELECT article_id FROM feed_items)`,
+         AND article_id NOT IN (SELECT article_id FROM user_feed_items)`,
     );
+    // 期限切れの仮登録・確認URL、古いモックメール、古いログイン失敗の記録を消す
+    await pool.query(`DELETE FROM pending_registrations WHERE expires_at < now()`);
+    await pool.query(`DELETE FROM email_changes WHERE expires_at < now()`);
+    await pool.query(`DELETE FROM password_resets WHERE expires_at < now() - interval '1 day'`);
+    await pool.query(`DELETE FROM mock_mails WHERE created_at < now() - interval '7 days'`);
+    await pool.query(`DELETE FROM login_attempts WHERE COALESCE(locked_until, now()) < now() - interval '1 day'`);
 
     await pool.query(`UPDATE collections SET completed_at=now(), status='done', note=$2 WHERE collection_id=$1`, [collectionId, notes.join('\n') || null]);
-    log(`完了：一覧${picked.length}件、新規${touched.length}件、削除${removed}件`);
-    return { collectionId, listed: picked.length, added: touched.length, removed, notes };
+    log(`完了：ユーザー${members.length}人・一覧合計${listedTotal}件、新規${touched.length}件、削除${removed}件`);
+    return { collectionId, users: members.length, listed: listedTotal, added: touched.length, removed, notes };
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
     await pool.query(`UPDATE collections SET status='failed', note=$2 WHERE collection_id=$1`, [collectionId, String(e.stack || e)]);

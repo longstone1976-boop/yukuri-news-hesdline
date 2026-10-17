@@ -1,9 +1,10 @@
--- ゆっくりNEWS：収集と要約のためのテーブル（仕様書 3章・2.3・5.2・8.4 に対応）
+-- ゆっくりNEWS のテーブル（仕様書 2.3・3章・5.2・8章・9章 に対応）
+-- 起動のたびに実行される。何度実行しても同じ結果になるように書く
 
 CREATE TABLE IF NOT EXISTS sites (
   site_id      SERIAL PRIMARY KEY,
   name         TEXT NOT NULL,
-  feed_url     TEXT NOT NULL UNIQUE,          -- 同じURLは1件（8.4）
+  feed_url     TEXT NOT NULL UNIQUE,          -- 同じURLは全ユーザー共通で1件。収集も1回（3.2）
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -36,16 +37,77 @@ CREATE TABLE IF NOT EXISTS articles (
 );
 CREATE INDEX IF NOT EXISTS articles_pending_idx ON articles (summary_status) WHERE summary_status = 'pending';
 
-CREATE TABLE IF NOT EXISTS feed_items (
-  collection_id INTEGER NOT NULL REFERENCES collections(collection_id) ON DELETE CASCADE,
-  position      INTEGER NOT NULL,
-  article_id    INTEGER NOT NULL REFERENCES articles(article_id) ON DELETE CASCADE,
-  PRIMARY KEY (collection_id, position)
-);
-
--- 見出しも再要約の対象にする（2.3）。既存の表に列を追加
+-- 見出しも再要約の対象にする（2.3）
 ALTER TABLE articles ADD COLUMN IF NOT EXISTS title_status TEXT NOT NULL DEFAULT 'done'; -- done / pending / final
 ALTER TABLE articles ADD COLUMN IF NOT EXISTS title_retry INTEGER NOT NULL DEFAULT 0;
--- 列を追加する前に「先頭24文字＋…」で保存された見出しを、再要約の対象にする
 UPDATE articles SET title_status = 'pending'
  WHERE title_status = 'done' AND title_retry = 0 AND char_length(title_original) > 25 AND title LIKE '%…';
+
+-- ===== 会員（8章・9章） =====
+CREATE TABLE IF NOT EXISTS users (
+  user_id         TEXT COLLATE "C" PRIMARY KEY,   -- 西暦4桁＋ランダム8文字。大文字と小文字を区別（8.1）
+  email           TEXT UNIQUE,                    -- ログインID。退会時に NULL にして解放（9.6）
+  password_hash   TEXT,                           -- scrypt でハッシュ化（8.2）
+  status          TEXT NOT NULL DEFAULT 'active', -- active / withdrawn
+  session_version INTEGER NOT NULL DEFAULT 1,     -- パスワード変更・退会で増やし、全端末のログインを無効にする
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  withdrawn_at    TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS pending_registrations (  -- 仮登録（9.2）
+  token         TEXT PRIMARY KEY,
+  email         TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  expires_at    TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS email_changes (          -- メールアドレス変更（8.3）
+  token      TEXT PRIMARY KEY,
+  user_id    TEXT COLLATE "C" NOT NULL REFERENCES users(user_id),
+  new_email  TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS password_resets (        -- パスワードリセット（9.4）
+  token      TEXT PRIMARY KEY,
+  user_id    TEXT COLLATE "C" NOT NULL REFERENCES users(user_id),
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at    TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS login_attempts (         -- ログイン失敗（9.3）
+  email        TEXT PRIMARY KEY,
+  fail_count   INTEGER NOT NULL DEFAULT 0,
+  locked_until TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS id_retry_logs (          -- ユーザーIDの作り直しの記録（8.1）
+  occurred_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS user_sites (             -- ユーザーが登録した収集元URL（8.4）
+  user_id       TEXT COLLATE "C" NOT NULL REFERENCES users(user_id),
+  site_id       INTEGER NOT NULL REFERENCES sites(site_id) ON DELETE CASCADE,
+  registered_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, site_id)
+);
+
+CREATE TABLE IF NOT EXISTS user_feed_items (        -- ユーザーごとのニュース一覧（最大200件。3.2・4.2）
+  user_id       TEXT COLLATE "C" NOT NULL REFERENCES users(user_id),
+  position      INTEGER NOT NULL,
+  article_id    INTEGER NOT NULL REFERENCES articles(article_id) ON DELETE CASCADE,
+  collection_id INTEGER REFERENCES collections(collection_id) ON DELETE SET NULL,
+  PRIMARY KEY (user_id, position)
+);
+DROP TABLE IF EXISTS feed_items;                    -- 1人用だったときの一覧（使わなくなった）
+
+CREATE TABLE IF NOT EXISTS mock_mails (             -- メール送信のモック（実際には送らない）
+  mail_id    SERIAL PRIMARY KEY,
+  to_email   TEXT NOT NULL,
+  subject    TEXT NOT NULL,
+  body       TEXT NOT NULL,
+  link_url   TEXT,
+  link_label TEXT,
+  view_key   TEXT NOT NULL,                         -- この鍵を知っている画面だけがメールを表示できる
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

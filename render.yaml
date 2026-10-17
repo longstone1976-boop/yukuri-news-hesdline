@@ -19,9 +19,11 @@ services:
       - key: GEMINI_API_KEY
         sync: false          # デプロイ時に画面で入力（ファイルには書かない）
       - key: APP_PASSWORD
-        sync: false          # 画面を開くためのパスワード（12文字以上）
+        sync: false          # 管理者画面（/admin）のパスワード（12文字以上）
       - key: APP_USER
-        value: admin
+        value: admin         # 管理者画面のユーザー名
+      - key: SESSION_SECRET
+        generateValue: true  # ログイン状態の署名用（Render が自動で作る）
       - key: GEMINI_MODEL
         value: gemini-3.5-flash
       - key: ENABLE_SCHEDULER
