@@ -71,12 +71,13 @@ async function processNewArticle(siteId, item, collectedAt) {
 }
 
 /** 要約未完了の記事を再要約する（収集の対象期間から外れていても行う。最大2回） */
-async function retryPending(skipIds) {
+async function retryPending(skipIds, siteIds = null) {
   // 要約未完了の見出し・概要を再要約する（どちらも最大2回。収集の対象期間から外れていても行う）
   const { rows } = await pool.query(
     `SELECT article_id, url, title_original, source_text, summary_status, summary_retry, title_status, title_retry FROM articles
-      WHERE (summary_status = 'pending' OR title_status = 'pending') AND NOT (article_id = ANY($1::int[]))`,
-    [skipIds],
+      WHERE (summary_status = 'pending' OR title_status = 'pending') AND NOT (article_id = ANY($1::int[]))
+        AND ($2::int[] IS NULL OR site_id = ANY($2::int[]))`,
+    [skipIds, siteIds],
   );
   for (const a of rows) {
     if (isQuotaExhausted()) break; // 1日の上限に達したら、回数を数えずに次の収集へ回す
@@ -132,12 +133,16 @@ export function selectRoundRobin(bySite, max = LIST_MAX) {
 }
 
 /** 1回分の収集（6:00／11:55／16:00 に実行） */
-export async function runCollection() {
+/**
+ * 1回分の収集。userId を渡すと、そのユーザーが登録したサイトだけを読み込み、そのユーザーの一覧だけを作り直す
+ * （MYページの「今すぐ読み込む」用）
+ */
+export async function runCollection({ userId = null } = {}) {
   const client = await pool.connect();
   const { rows: lk } = await client.query('SELECT pg_try_advisory_lock($1) AS ok', [LOCK_KEY]);
   if (!lk[0].ok) { client.release(); log('別の収集が実行中のため、スキップしました'); return { skipped: true }; }
 
-  const { rows: c } = await pool.query(`INSERT INTO collections DEFAULT VALUES RETURNING collection_id, started_at`);
+  const { rows: c } = await pool.query(`INSERT INTO collections (user_id) VALUES ($1) RETURNING collection_id, started_at`, [userId]);
   const collectionId = c[0].collection_id;
   resetQuotaFlag();
   const collectedAt = c[0].started_at;
@@ -146,8 +151,9 @@ export async function runCollection() {
     // 1人以上のユーザーが登録しているサイトだけを、1回ずつ収集する（8.4）
     const { rows: sites } = await pool.query(
       `SELECT s.site_id, s.name, s.feed_url FROM sites s
-        WHERE EXISTS (SELECT 1 FROM user_sites us JOIN users u USING (user_id) WHERE us.site_id = s.site_id AND u.status = 'active')
-        ORDER BY s.site_id`);
+        WHERE EXISTS (SELECT 1 FROM user_sites us JOIN users u USING (user_id)
+                       WHERE us.site_id = s.site_id AND u.status = 'active' AND ($1::text IS NULL OR us.user_id = $1))
+        ORDER BY s.site_id`, [userId]);
     const since = Date.now() - WINDOW_MS;
     const seen = new Set();
     const bySite = new Map(); // site_id → その回に集めた記事
@@ -191,17 +197,18 @@ export async function runCollection() {
       bySite.set(site.site_id, list);
     }
 
-    await retryPending(touched);
+    await retryPending(touched, userId ? sites.map((x) => x.site_id) : null);
 
     // ユーザーごとに、そのユーザーが登録したサイトの記事だけで一覧を作り直す（3.2）
     const { rows: members } = await pool.query(
       `SELECT us.user_id, array_agg(us.site_id) AS site_ids FROM user_sites us JOIN users u USING (user_id)
-        WHERE u.status = 'active' GROUP BY us.user_id`);
+        WHERE u.status = 'active' AND ($1::text IS NULL OR us.user_id = $1) GROUP BY us.user_id`, [userId]);
     const listedIds = new Set();
     let listedTotal = 0;
     // 一覧の作り直しは1つのトランザクションで行う（途中で一覧が空にならないように）
     await client.query('BEGIN');
-    await client.query('DELETE FROM user_feed_items');
+    if (userId) await client.query('DELETE FROM user_feed_items WHERE user_id=$1', [userId]);
+    else await client.query('DELETE FROM user_feed_items');
     for (const m of members) {
       const picked = selectRoundRobin(m.site_ids.map((id) => bySite.get(id) || []));
       for (let i = 0; i < picked.length; i++) {
@@ -215,20 +222,22 @@ export async function runCollection() {
     await client.query('COMMIT');
 
     // 一覧から外れて24時間が過ぎた記事を削除（3.2。閲覧履歴の機能は今回の範囲外）
-    const { rowCount: removed } = await pool.query(
+    const { rowCount: removed } = userId ? { rowCount: 0 } : await pool.query(
       `DELETE FROM articles WHERE summary_status <> 'pending' AND title_status <> 'pending'
          AND COALESCE(last_listed_at, collected_at) < now() - interval '24 hours'
          AND article_id NOT IN (SELECT article_id FROM user_feed_items)`,
     );
     // 期限切れの仮登録・確認URL、古いモックメール、古いログイン失敗の記録を消す
-    await pool.query(`DELETE FROM pending_registrations WHERE expires_at < now()`);
-    await pool.query(`DELETE FROM email_changes WHERE expires_at < now()`);
-    await pool.query(`DELETE FROM password_resets WHERE expires_at < now() - interval '1 day'`);
-    await pool.query(`DELETE FROM mock_mails WHERE created_at < now() - interval '7 days'`);
-    await pool.query(`DELETE FROM login_attempts WHERE COALESCE(locked_until, now()) < now() - interval '1 day'`);
+    if (!userId) {
+      await pool.query(`DELETE FROM pending_registrations WHERE expires_at < now()`);
+      await pool.query(`DELETE FROM email_changes WHERE expires_at < now()`);
+      await pool.query(`DELETE FROM password_resets WHERE expires_at < now() - interval '1 day'`);
+      await pool.query(`DELETE FROM mock_mails WHERE created_at < now() - interval '7 days'`);
+      await pool.query(`DELETE FROM login_attempts WHERE COALESCE(locked_until, now()) < now() - interval '1 day'`);
+    }
 
     await pool.query(`UPDATE collections SET completed_at=now(), status='done', note=$2 WHERE collection_id=$1`, [collectionId, notes.join('\n') || null]);
-    log(`完了：ユーザー${members.length}人・一覧合計${listedTotal}件、新規${touched.length}件、削除${removed}件`);
+    log(`完了${userId ? '（ユーザーの今すぐ読み込み）' : ''}：ユーザー${members.length}人・一覧合計${listedTotal}件、新規${touched.length}件、削除${removed}件`);
     return { collectionId, users: members.length, listed: listedTotal, added: touched.length, removed, notes };
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});

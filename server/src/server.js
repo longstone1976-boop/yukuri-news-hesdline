@@ -299,8 +299,11 @@ app.post('/reset/confirm', async (req, res) => {
 });
 
 // ===== ニュースフィールド画面（4章）：ユーザーごとの一覧 =====
-async function lastCollection() {
-  const { rows } = await pool.query(`SELECT completed_at FROM collections WHERE status='done' ORDER BY completed_at DESC LIMIT 1`);
+// そのユーザーにとっての最新の取得日時（自動収集、または本人の「今すぐ読み込む」）
+async function lastCollection(userId = null) {
+  const { rows } = await pool.query(
+    `SELECT completed_at FROM collections WHERE status='done' AND (user_id IS NULL OR user_id = $1)
+      ORDER BY completed_at DESC LIMIT 1`, [userId]);
   return rows[0]?.completed_at || null;
 }
 const thumbHtml = (url) => url
@@ -317,7 +320,7 @@ app.get('/', needUser, async (req, res) => {
        FROM user_feed_items f JOIN articles a USING (article_id) LEFT JOIN sites s ON s.site_id = a.site_id
       WHERE f.user_id=$1 ORDER BY f.position LIMIT $2 OFFSET $3`, [uid, PER_PAGE, (page - 1) * PER_PAGE]);
   const { rows: [{ c: siteCount }] } = await pool.query('SELECT count(*)::int AS c FROM user_sites WHERE user_id=$1', [uid]);
-  const last = await lastCollection();
+  const last = await lastCollection(uid);
   let inner = `${msgOf(req)}<div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:8px"><h1>ニュース</h1>
     <div class="meta" style="font-size:14px">${page}/${total}ページ　／　最新記事の取得：${last ? fmtJst(last) : 'まだ収集していません'}</div></div>`;
   if (!siteCount) inner += `<div class="card" style="padding:24px;display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between"><span>MYページで収集元のURLを登録してください</span><a class="btn" href="/mypage">MYページへ</a></div>`;
@@ -360,7 +363,8 @@ app.get('/mypage', needUser, async (req, res) => {
   const { rows: sites } = await pool.query(
     `SELECT s.site_id, s.name, s.feed_url, us.registered_at FROM user_sites us JOIN sites s USING (site_id)
       WHERE us.user_id=$1 ORDER BY us.registered_at DESC`, [u.user_id]);
-  const last = await lastCollection();
+  const last = await lastCollection(u.user_id);
+  const busy = userRuns.has(u.user_id);
   res.send(layout('MYページ', { active: 'mypage' }, `${msgOf(req)}<div class="mid">
     <h1 style="margin:0">MYページ</h1>
     <section class="card" style="padding:4px 20px">
@@ -368,7 +372,9 @@ app.get('/mypage', needUser, async (req, res) => {
       <div class="row"><div><div class="meta">ユーザーID（変更できません）</div><div class="mono" style="font-size:18px">${h(u.user_id)}</div></div></div>
       <div class="row"><div><div class="meta">パスワード</div><div>••••••••••••</div></div>
         <form method="post" action="/mypage/password" style="margin:0"><button class="linkbtn" type="submit">パスワードを変更する</button></form></div>
-      <div class="row" style="border-bottom:none"><div><div class="meta">最新記事の取得日時</div><div>${last ? fmtJst(last) : 'まだ収集していません'}</div></div></div>
+      <div class="row" style="border-bottom:none"><div><div class="meta">最新記事の取得日時</div><div>${last ? fmtJst(last) : 'まだ収集していません'}</div></div>
+        <form method="post" action="/mypage/collect" style="margin:0"><button class="btn" type="submit" ${busy || !sites.length ? 'disabled' : ''}>${busy ? '読み込み中…' : '今すぐ読み込む'}</button></form></div>
+      <div class="meta" style="padding:0 0 12px">「今すぐ読み込む」は、登録している収集元URLの最新記事を読み込みます（10分に1回まで。記事数によっては数分かかります）。</div>
     </section>
     <section class="card" style="padding:20px;display:flex;flex-direction:column;gap:12px">
       <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:8px"><h2 style="margin:0">収集元URL</h2><span class="meta">${sites.length}件（上限${MAX_SITES}件）</span></div>
@@ -388,6 +394,30 @@ app.get('/mypage', needUser, async (req, res) => {
       <a class="btn2" href="/mypage/withdraw">退会</a>
     </div>
   </div>`));
+});
+
+// MYページの「今すぐ読み込む」：本人が登録したサイトだけを読み込み、本人の一覧だけを作り直す
+const userRuns = new Map();
+const USER_RUN_INTERVAL_MIN = 10;
+app.post('/mypage/collect', needUser, async (req, res) => {
+  const uid = req.user.user_id;
+  if (userRuns.has(uid)) return go(res, '/mypage', '読み込み中です。しばらくしてから画面を再読み込みしてください');
+  const { rows: [{ c }] } = await pool.query('SELECT count(*)::int AS c FROM user_sites WHERE user_id=$1', [uid]);
+  if (!c) return go(res, '/mypage', '先に収集元のURLを登録してください', true);
+  const { rows: [recent] } = await pool.query(
+    `SELECT started_at FROM collections WHERE user_id=$1 AND started_at > now() - interval '${USER_RUN_INTERVAL_MIN} minutes'
+      ORDER BY started_at DESC LIMIT 1`, [uid]);
+  if (recent) {
+    const wait = Math.ceil((new Date(recent.started_at).getTime() + USER_RUN_INTERVAL_MIN * 60_000 - Date.now()) / 60_000);
+    return go(res, '/mypage', `「今すぐ読み込む」は${USER_RUN_INTERVAL_MIN}分に1回までです。あと約${wait}分お待ちください`, true);
+  }
+  if (running) return go(res, '/mypage', '全体の自動収集を実行中です。終わると一覧に反映されます。数分後に確認してください', true);
+  const job = runCollection({ userId: uid })
+    .then((r) => { if (r?.skipped) console.log('[collect] 別の収集が実行中のため、今すぐ読み込みをスキップしました'); })
+    .catch((e) => console.error(e))
+    .finally(() => userRuns.delete(uid));
+  userRuns.set(uid, job);
+  go(res, '/mypage', '読み込みを開始しました。記事数によっては数分かかります。終わったらニュース画面に表示されます');
 });
 
 app.post('/mypage/sites', needUser, async (req, res) => {
@@ -567,7 +597,7 @@ app.get('/admin', needAdmin, async (req, res) => {
       <form method="post" action="/admin/collect"><button class="btn" type="submit" ${running ? 'disabled' : ''}>${running ? '収集中…（画面を再読み込みして確認）' : '今すぐ収集'}</button></form>
       <p style="margin:12px 0 4px">会員 ${st.users}人（退会 ${st.withdrawn}人・仮登録 ${st.pending_users}件）／ 記事 ${st.total}件（Gemini要約 ${st.ai}件・要約未完了 ${st.pending}件・代わりの内容で確定 ${st.final}件）／ 直近1日のユーザーID作り直し ${st.id_retry}回</p>
       <div class="scroll"><table><thead><tr><th>開始</th><th>完了</th><th>状態</th><th>メモ</th></tr></thead><tbody>
-      ${cols.map((c) => `<tr><td>${fmtJst(c.started_at)}</td><td>${fmtJst(c.completed_at)}</td><td>${h(statusJa[c.status] || c.status)}</td><td style="white-space:pre-line">${h((c.note || '').slice(0, 500))}</td></tr>`).join('') || '<tr><td colspan="4">まだ収集していません</td></tr>'}
+      ${cols.map((c) => `<tr><td>${fmtJst(c.started_at)}</td><td>${fmtJst(c.completed_at)}</td><td>${h(statusJa[c.status] || c.status)}${c.user_id ? '<br><span class="meta">会員の今すぐ読み込み</span>' : ''}</td><td style="white-space:pre-line">${h((c.note || '').slice(0, 500))}</td></tr>`).join('') || '<tr><td colspan="4">まだ収集していません</td></tr>'}
       </tbody></table></div>
     </section>
     <section class="card" style="padding:20px">

@@ -111,3 +111,6 @@ CREATE TABLE IF NOT EXISTS mock_mails (             -- メール送信のモッ�
   view_key   TEXT NOT NULL,                         -- この鍵を知っている画面だけがメールを表示できる
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- MYページの「今すぐ読み込む」で行った収集は、そのユーザーIDを記録する（自動収集は NULL）
+ALTER TABLE collections ADD COLUMN IF NOT EXISTS user_id TEXT COLLATE "C";
