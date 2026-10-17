@@ -137,12 +137,15 @@ app.post('/login', async (req, res) => {
   const { rows: [u] } = await pool.query(`SELECT * FROM users WHERE email=$1 AND status='active'`, [email]);
   if (u && verifyPassword(String(req.body.password || ''), u.password_hash)) {
     await pool.query('DELETE FROM login_attempts WHERE email=$1', [email]);
+    console.log(`[auth] ログイン成功 ユーザーID ${u.user_id}`);
     loginUser(req, res, u);
     return res.redirect(303, next);
   }
   const { rows: [r] } = await pool.query(
     `INSERT INTO login_attempts (email, fail_count) VALUES ($1, 1)
      ON CONFLICT (email) DO UPDATE SET fail_count = login_attempts.fail_count + 1 RETURNING fail_count`, [email]);
+  const { rows: [pend] } = await pool.query('SELECT 1 FROM pending_registrations WHERE email=$1', [email]);
+  console.log(`[auth] ログイン失敗（${r.fail_count}回目）：${u ? 'パスワード違い' : pend ? '仮登録のまま（確認用URL未クリック）' : '未登録のメールアドレス'}`);
   if (r.fail_count >= 5) {
     await pool.query(`UPDATE login_attempts SET fail_count=0, locked_until=now() + interval '15 minutes' WHERE email=$1`, [email]);
     return res.status(401).send(loginPage(next, email, '5回続けて失敗したため、このメールアドレスでのログインを15分間停止しました。'));
@@ -223,6 +226,7 @@ app.get('/verify', async (req, res) => {
     return go(res, '/signup', '登録に失敗しました。時間をおいて再度お試しください', true);
   }
   await pool.query('DELETE FROM pending_registrations WHERE email=$1', [p.email]);
+  console.log(`[auth] 本登録完了 ユーザーID ${user.user_id}`);
   loginUser(req, res, user);
   go(res, '/', `登録が完了しました。ユーザーID：${user.user_id}　MYページで収集元のURLを登録すると、ニュースが表示されます。`);
 });
