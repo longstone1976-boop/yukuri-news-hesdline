@@ -1,0 +1,31 @@
+# Render の Blueprint（Webサービス＋PostgreSQL）
+# プラン（料金）は Render の画面で選んでください。
+services:
+  - type: web
+    name: yukkuri-news
+    runtime: node
+    rootDir: server        # このリポジトリの server フォルダで動かす
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: yukkuri-news-db
+          property: connectionString
+      - key: GEMINI_API_KEY
+        sync: false          # デプロイ時に画面で入力（ファイルには書かない）
+      - key: APP_PASSWORD
+        sync: false          # 画面を開くためのパスワード（12文字以上）
+      - key: APP_USER
+        value: admin
+      - key: GEMINI_MODEL
+        value: gemini-3.5-flash
+      - key: ENABLE_SCHEDULER
+        value: "true"
+
+databases:
+  - name: yukkuri-news-db
+    databaseName: yukkuri_news

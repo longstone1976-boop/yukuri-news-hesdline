@@ -1,0 +1,20 @@
+{
+  "name": "yukkuri-news-collector",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ゆっくりNEWS：RSS収集＋Gemini要約＋PostgreSQL保存＋一覧表示",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node src/server.js",
+    "collect": "node src/run-collect.js",
+    "migrate": "node src/migrate.js"
+  },
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "express": "^5.2.0",
+    "node-cron": "^4.2.1",
+    "pg": "^8.16.0",
+    "rss-parser": "^3.13.0"
+  }
+}
