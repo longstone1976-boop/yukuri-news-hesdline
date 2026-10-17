@@ -38,13 +38,17 @@ app.use((req, res, next) => {
 app.use((req, res, next) => {
   if (req.method === 'POST') {
     const origin = req.headers.origin;
-    if (origin && new URL(origin).host !== req.headers.host) return res.status(403).send('不正なリクエストです');
+    if (origin) {
+      let host = null;
+      try { host = new URL(origin).host; } catch { /* "null" など */ }
+      if (host !== req.headers.host) return res.status(403).send('不正なリクエストです（別のサイトからの送信は受け付けません）');
+    }
   }
   next();
 });
 app.use((_req, res, next) => {
   res.set('Content-Security-Policy', "default-src 'self'; img-src * data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'unsafe-inline'; base-uri 'none'; form-action 'self'");
-  res.set('Referrer-Policy', 'no-referrer');
+  res.set('Referrer-Policy', 'same-origin'); // 同じサイトへの送信では送信元が分かるようにする（外部リンクには送らない）
   next();
 });
 
