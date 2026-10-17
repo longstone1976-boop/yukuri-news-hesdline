@@ -17,7 +17,7 @@ const SESSION_DAYS = 30;        // 最後に操作してから30日（9.3）
 const LOCK_MS = 15 * 60_000;    // 5回失敗で15分停止（9.3）
 const TOKEN_HOURS = 24;         // 確認用URL・リセット用URLの有効期限（8.3・9.2・9.4）
 const ID_RETRY_MAX = 5;         // ユーザーIDの作り直しは最大5回（8.1）
-const ADMIN_USER = process.env.APP_USER || 'admin';
+const ADMIN_USER = (process.env.APP_USER || 'admin').trim().toLowerCase();
 const ADMIN_PASSWORD = process.env.APP_PASSWORD;
 
 if (!ADMIN_PASSWORD || ADMIN_PASSWORD.length < 12) {
@@ -518,7 +518,7 @@ const adminFails = { n: 0, until: 0 };
 function adminLoginPage(error) {
   return layout('管理者ログイン', { nav: 'none' }, `<form class="card narrow" method="post" action="/admin/login">
     <h1 style="margin:0">管理者ログイン</h1>
-    <label class="f">ユーザー名<input class="inp" name="user" autocomplete="username" required></label>
+    <label class="f">ログインID<input class="inp" name="user" autocomplete="username" required></label>
     <label class="f">パスワード<input class="inp" type="password" name="password" autocomplete="current-password" required></label>
     ${error ? `<div class="err" role="alert">${h(error)}</div>` : ''}
     <button class="btn" type="submit">ログイン</button>
@@ -527,14 +527,14 @@ function adminLoginPage(error) {
 app.get('/admin/login', (req, res) => (req.admin ? res.redirect(303, '/admin') : res.send(adminLoginPage(''))));
 app.post('/admin/login', (req, res) => {
   if (adminFails.until > Date.now()) return res.status(429).send(adminLoginPage('ログインが一時的に停止されています。15分ほど待ってから、もう一度お試しください。'));
-  if (safeEq(String(req.body.user || '').trim(), ADMIN_USER) && safeEq(String(req.body.password || ''), ADMIN_PASSWORD)) {
+  if (safeEq(String(req.body.user || '').trim().toLowerCase(), ADMIN_USER) && safeEq(String(req.body.password || ''), ADMIN_PASSWORD)) {
     adminFails.n = 0;
     setCookie(req, res, ADMIN_COOKIE, adminSessions.make(['admin'], 1), 86400);
     return res.redirect(303, '/admin');
   }
   adminFails.n += 1;
   if (adminFails.n >= 5) { adminFails.n = 0; adminFails.until = Date.now() + LOCK_MS; }
-  res.status(401).send(adminLoginPage('ユーザー名またはパスワードが正しくありません'));
+  res.status(401).send(adminLoginPage('ログインIDまたはパスワードが正しくありません'));
 });
 app.post('/admin/logout', (_req, res) => { clearCookie(res, ADMIN_COOKIE); res.redirect(303, '/admin/login'); });
 

@@ -21,7 +21,7 @@ services:
       - key: APP_PASSWORD
         sync: false          # 管理者画面（/admin）のパスワード（12文字以上）
       - key: APP_USER
-        value: admin         # 管理者画面のユーザー名
+        value: longstone1976@gmail.com   # 管理者画面のログインID
       - key: SESSION_SECRET
         generateValue: true  # ログイン状態の署名用（Render が自動で作る）
       - key: GEMINI_MODEL
