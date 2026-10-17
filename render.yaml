@@ -1,9 +1,10 @@
 # Render の Blueprint（Webサービス＋PostgreSQL）
-# プラン（料金）は Render の画面で選んでください。
+# まずは無料プランで試す設定。有料にする場合は plan を変更してください。
 services:
   - type: web
     name: yukkuri-news
     runtime: node
+    plan: free             # 無料プラン（しばらくアクセスがないと停止します）
     rootDir: server        # このリポジトリの server フォルダで動かす
     buildCommand: npm ci
     startCommand: npm start
@@ -29,3 +30,4 @@ services:
 databases:
   - name: yukkuri-news-db
     databaseName: yukkuri_news
+    plan: free             # 無料プラン（利用期限あり）
