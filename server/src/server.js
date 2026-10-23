@@ -124,7 +124,7 @@ function loginPage(next, email, error, msg) {
   </form>`);
 }
 app.get('/login', (req, res) => {
-  if (req.user) return res.redirect(303, safeNext(req.query.next));
+  if (req.user) return res.redirect(303, '/');
   res.send(loginPage(safeNext(req.query.next), '', '', msgOf(req)));
 });
 app.post('/login', async (req, res) => {
@@ -139,7 +139,7 @@ app.post('/login', async (req, res) => {
     await pool.query('DELETE FROM login_attempts WHERE email=$1', [email]);
     console.log(`[auth] ログイン成功 ユーザーID ${u.user_id}`);
     loginUser(req, res, u);
-    return res.redirect(303, next);
+    return res.redirect(303, '/'); // ログイン後は常にNews（トップ）へ
   }
   const { rows: [r] } = await pool.query(
     `INSERT INTO login_attempts (email, fail_count) VALUES ($1, 1)
