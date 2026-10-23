@@ -6,8 +6,8 @@ const CSS = `
 a{color:var(--accent)}a:hover{color:#063F3F}
 header{background:var(--dark);color:#fff}
 footer{background:var(--dark);color:#BFD9D9;font-size:13px}
-footer .wrap{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px 16px;padding:20px}
-footer nav{gap:16px}footer nav a,footer nav a:hover{color:#fff;background:none;border:none;padding:0;min-height:44px;display:inline-flex;align-items:center}
+footer .wrap{display:flex;flex-direction:column;align-items:center;gap:4px;padding:16px 20px 20px;text-align:center}
+footer nav{gap:24px;justify-content:center}footer nav a,footer nav a:hover{color:#fff;background:none;border:none;padding:0;min-height:44px;display:inline-flex;align-items:center}
 .wrap{max-width:1040px;margin:0 auto;padding:12px 20px}
 .top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px}
 .logo{font-size:24px;font-weight:700;color:#fff;text-decoration:none}.logo small{font-size:12px;font-weight:400;margin-left:8px;color:#BFD9D9}
@@ -79,7 +79,7 @@ export function layout(title, { nav = 'user', active = '' } = {}, inner) {
 <style>${CSS}</style></head><body>
 <header><div class="wrap top"><a class="logo" href="${nav === 'admin' ? '/admin' : '/'}">ゆっくりNEWS${nav === 'admin' ? '<small>管理者</small>' : ''}</a><nav>${navHtml}</nav></div></header>
 <main>${inner}</main>
-<footer><div class="wrap"><span>© ゆっくりNEWS</span><nav aria-label="フッター"><a href="/terms">利用規約</a><a href="/privacy">プライバシーポリシー</a></nav></div></footer></body></html>`;
+<footer><div class="wrap"><nav aria-label="フッター"><a href="/terms">利用規約</a><a href="/privacy">プライバシーポリシー</a></nav><span>© ゆっくりNEWS</span></div></footer></body></html>`;
 }
 
 export const flash = (msg, bad) => (msg ? `<div class="flash ${bad ? 'bad' : ''}" role="status">${h(msg)}</div>` : '');
