@@ -1,6 +1,6 @@
 import { pool } from './db.js';
 import { loadFeed, readArticlePage, rssImage } from './fetchers.js';
-import { summarize, resetQuotaFlag, isQuotaExhausted } from './gemini.js';
+import { summarizeBatch, resetQuotaFlag, isQuotaError } from './gemini.js';
 import { len, stripHtml, truncateTitle, truncateSummary, NO_SUMMARY, TITLE_MAX, SUMMARY_MAX } from './text.js';
 
 const PER_SITE = 20;          // サイトごとに最新20件（3.2）
@@ -18,79 +18,76 @@ function fallbackSummary(rssDesc, ogDesc) {
   return { summary: NO_SUMMARY, source: 'none' };
 }
 
-/** 新しい記事を1件処理して DB に保存する */
-async function processNewArticle(siteId, item, collectedAt) {
+/** 新しい記事の準備：記事ページを1回だけ読み込み、本文・サムネイル・og:description を取る（Gemini はまだ呼ばない） */
+async function prepareNewArticle(siteId, item, collectedAt) {
   const url = item.url;
   const titleOriginal = stripHtml(item.title || '') || url;
   const rssDesc = stripHtml(item.content || item.contentSnippet || item.summary || '') || null;
-
-  // 記事ページは1記事につき1回だけ読み込む（本文・サムネイル・og:description に使う）
   const page = await readArticlePage(url);
-  const thumbnail = rssImage(item) || page.ogImage || page.twitterImage || null;
+  const sourceText = page.body || rssDesc || ''; // 要約の元：本文 → 取れなければRSSの説明文（2.3）
+  return {
+    siteId, item, url, titleOriginal, rssDesc, page, sourceText, collectedAt,
+    thumbnail: rssImage(item) || page.ogImage || page.twitterImage || null,
+    needTitle: len(titleOriginal) > TITLE_MAX,
+    needSummary: len(sourceText) > SUMMARY_MAX, // 250文字以内なら要約せずそのまま使う
+  };
+}
 
-  // 要約の元にする文章：本文 → 取れなければRSSの説明文（2.3）
-  const sourceText = page.body || rssDesc || '';
-  const needTitle = len(titleOriginal) > TITLE_MAX;
-  const needSummary = len(sourceText) > SUMMARY_MAX; // 250文字以内なら要約せずそのまま使う
-
-  let title = titleOriginal;
-  let summary, summaryStatus, summarySource, keepSource = null;
-  let titleStatus = 'done';
-
-  if (needTitle || needSummary) {
-    const r = await summarize({ title: titleOriginal, needTitle, sourceText, needSummary });
-    if (needTitle) { title = r.title || truncateTitle(titleOriginal); if (!r.title) titleStatus = 'pending'; }
-    if (r.titleError) log('見出しの要約に失敗:', url, r.titleError);
-    if (needSummary) {
-      if (r.summary) {
-        summary = r.summary; summaryStatus = 'done'; summarySource = 'ai';
-      } else {
-        log('概要の要約に失敗:', url, r.summaryError);
-        const fb = fallbackSummary(rssDesc, page.ogDescription);
-        summary = fb.summary; summarySource = fb.source; summaryStatus = 'pending'; keepSource = sourceText;
-      }
+/** 要約の結果（r）を当てはめて DB に保存する */
+async function saveNewArticle(p, r) {
+  let title = p.titleOriginal, titleStatus = 'done';
+  let summary, summaryStatus = 'done', summarySource, keepSource = null;
+  if (p.needTitle) {
+    if (r?.title) title = r.title;
+    else { title = truncateTitle(p.titleOriginal); titleStatus = 'pending'; log('見出しの要約に失敗:', p.url, r?.titleError); }
+  }
+  if (p.needSummary) {
+    if (r?.summary) { summary = r.summary; summarySource = 'ai'; }
+    else {
+      log('概要の要約に失敗:', p.url, r?.summaryError);
+      const fb = fallbackSummary(p.rssDesc, p.page.ogDescription);
+      summary = fb.summary; summarySource = fb.source; summaryStatus = 'pending'; keepSource = p.sourceText;
     }
-  }
-  if (!needSummary) {
-    if (sourceText) { summary = sourceText; summarySource = 'raw'; }
-    else { const fb = fallbackSummary(rssDesc, page.ogDescription); summary = fb.summary; summarySource = fb.source; }
-    summaryStatus = 'done';
-  }
+  } else if (p.sourceText) { summary = p.sourceText; summarySource = 'raw'; }
+  else { const fb = fallbackSummary(p.rssDesc, p.page.ogDescription); summary = fb.summary; summarySource = fb.source; }
 
-  const postedAt = item.postedAt || collectedAt;
+  const postedAt = p.item.postedAt || p.collectedAt;
   const { rows } = await pool.query(
     `INSERT INTO articles (url, site_id, title, title_original, title_status, summary, summary_status, summary_source, source_text,
        rss_description, og_description, thumbnail_url, posted_at, posted_at_estimated, collected_at)
-     VALUES ($1,$2,$3,$4,$15,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
      ON CONFLICT (url) DO NOTHING
      RETURNING article_id`,
-    [url, siteId, title, titleOriginal, summary, summaryStatus, summarySource, keepSource,
-      rssDesc, page.ogDescription, thumbnail, postedAt, !item.postedAt, collectedAt, titleStatus],
+    [p.url, p.siteId, title, p.titleOriginal, titleStatus, summary, summaryStatus, summarySource, keepSource,
+      p.rssDesc, p.page.ogDescription, p.thumbnail, postedAt, !p.item.postedAt, p.collectedAt],
   );
   return rows[0]?.article_id ?? null;
 }
 
-/** 要約未完了の記事を再要約する（収集の対象期間から外れていても行う。最大2回） */
+/** 要約未完了の見出し・概要を、まとめて再要約する（どちらも最大2回。収集の対象期間から外れていても行う） */
 async function retryPending(skipIds, siteIds = null) {
-  // 要約未完了の見出し・概要を再要約する（どちらも最大2回。収集の対象期間から外れていても行う）
   const { rows } = await pool.query(
     `SELECT article_id, url, title_original, source_text, summary_status, summary_retry, title_status, title_retry FROM articles
       WHERE (summary_status = 'pending' OR title_status = 'pending') AND NOT (article_id = ANY($1::int[]))
-        AND ($2::int[] IS NULL OR site_id = ANY($2::int[]))`,
+        AND ($2::int[] IS NULL OR site_id = ANY($2::int[]))
+      ORDER BY article_id`,
     [skipIds, siteIds],
   );
-  for (const a of rows) {
-    if (isQuotaExhausted()) break; // 1日の上限に達したら、回数を数えずに次の収集へ回す
-    const needTitle = a.title_status === 'pending';
-    const needSummary = a.summary_status === 'pending';
-    const r = await summarize({ title: a.title_original, needTitle, sourceText: a.source_text || '', needSummary });
-    if (isQuotaExhausted() && ((needTitle && !r.title) || (needSummary && !r.summary))) break;
-
-    if (needTitle) {
+  if (!rows.length) return;
+  const jobs = rows.map((a) => ({
+    title: a.title_original, needTitle: a.title_status === 'pending',
+    sourceText: a.source_text || '', needSummary: a.summary_status === 'pending',
+  }));
+  const results = await summarizeBatch(jobs);
+  for (let i = 0; i < rows.length; i++) {
+    const a = rows[i], j = jobs[i], r = results[i];
+    if (j.needTitle) {
       const retry = a.title_retry + 1;
       if (r.title) {
         await pool.query(`UPDATE articles SET title=$2, title_status='done', title_retry=$3 WHERE article_id=$1`, [a.article_id, r.title, retry]);
         log('見出しの再要約に成功:', a.url);
+      } else if (isQuotaError(r.titleError)) {
+        // 1日の上限で呼べなかった分は、回数に数えず次の収集へ回す
       } else if (retry >= MAX_RETRY) {
         await pool.query(`UPDATE articles SET title_status='final', title_retry=$2 WHERE article_id=$1`, [a.article_id, retry]);
         log('見出しの再要約を2回失敗したため、先頭24文字＋…で確定:', a.url);
@@ -98,7 +95,7 @@ async function retryPending(skipIds, siteIds = null) {
         await pool.query(`UPDATE articles SET title_retry=$2 WHERE article_id=$1`, [a.article_id, retry]);
       }
     }
-    if (needSummary) {
+    if (j.needSummary) {
       const retry = a.summary_retry + 1;
       if (r.summary) {
         await pool.query(
@@ -106,6 +103,8 @@ async function retryPending(skipIds, siteIds = null) {
           [a.article_id, r.summary, retry],
         );
         log('概要の再要約に成功:', a.url);
+      } else if (isQuotaError(r.summaryError)) {
+        // 同上
       } else if (retry >= MAX_RETRY) {
         await pool.query(`UPDATE articles SET summary_status='final', summary_retry=$2, source_text=NULL WHERE article_id=$1`, [a.article_id, retry]);
         log('概要の再要約を2回失敗したため、代わりの概要で確定:', a.url);
@@ -132,7 +131,6 @@ export function selectRoundRobin(bySite, max = LIST_MAX) {
   return picked.sort((a, b) => b.posted - a.posted);
 }
 
-/** 1回分の収集（6:00／11:55／16:00 に実行） */
 /**
  * 1回分の収集。userId を渡すと、そのユーザーが登録したサイトだけを読み込み、そのユーザーの一覧だけを作り直す
  * （MYページの「今すぐ読み込む」用）
@@ -158,6 +156,7 @@ export async function runCollection({ userId = null } = {}) {
     const seen = new Set();
     const bySite = new Map(); // site_id → その回に集めた記事
     const touched = [];
+    const newEntries = [];
 
     for (const site of sites) {
       let feed;
@@ -183,19 +182,27 @@ export async function runCollection({ userId = null } = {}) {
         if (seen.has(it.url)) continue; // 同じURLは1件として扱う
         seen.add(it.url);
         const { rows: ex } = await pool.query('SELECT article_id, posted_at FROM articles WHERE url=$1', [it.url]);
-        let id, posted;
         if (ex.length) {
-          id = ex[0].article_id; posted = new Date(ex[0].posted_at).getTime(); // 収集済み：取り直さない
+          list.push({ id: ex[0].article_id, posted: new Date(ex[0].posted_at).getTime() }); // 収集済み：取り直さない
         } else {
-          id = await processNewArticle(site.site_id, it, collectedAt);
-          if (!id) continue;
-          posted = (it.postedAt || collectedAt).getTime();
-          touched.push(id);
+          const prep = await prepareNewArticle(site.site_id, it, collectedAt);
+          const entry = { id: null, posted: (it.postedAt || collectedAt).getTime(), prep };
+          list.push(entry);
+          newEntries.push(entry);
         }
-        list.push({ id, posted });
       }
       bySite.set(site.site_id, list);
     }
+
+    // 新しい記事の見出し・概要を、まとめて要約してから保存する
+    const needAi = newEntries.filter((e) => e.prep.needTitle || e.prep.needSummary);
+    const aiResults = await summarizeBatch(needAi.map((e) => e.prep));
+    needAi.forEach((e, i) => { e.result = aiResults[i]; });
+    for (const e of newEntries) {
+      e.id = await saveNewArticle(e.prep, e.result);
+      if (e.id) touched.push(e.id);
+    }
+    for (const [k, list] of bySite) bySite.set(k, list.filter((e) => e.id).map(({ id, posted }) => ({ id, posted })));
 
     await retryPending(touched, userId ? sites.map((x) => x.site_id) : null);
 

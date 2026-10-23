@@ -95,43 +95,72 @@ function parseJson(text) {
   return JSON.parse(m[0]);
 }
 
-/**
- * 見出し（必要な場合）と概要を1回の呼び出しで要約する。
- * 戻り値: { title: string|null, summary: string|null, titleError, summaryError }
- * 各項目は「空でない」「決められた文字数以内」を満たさなければ失敗扱い（2.3 失敗の定義）。
- */
-export async function summarize({ title, needTitle, sourceText, needSummary }) {
-  const tasks = [];
-  if (needTitle) tasks.push(`- "title": 次の記事タイトルを、意味を変えずに${TITLE_MAX - 3}文字以内の日本語の見出しにする（記号も1文字と数える。絶対に${TITLE_MAX}文字を超えない）。`);
-  if (needSummary) tasks.push(`- "summary": 次の記事本文を、${SUMMARY_MAX}文字以内の日本語で要約する。事実だけを書き、本文にないことは書かない。`);
-  const prompt = [
-    'あなたはニュースアプリの編集者です。次の作業をして、JSONだけを返してください。',
-    ...tasks,
-    '',
-    `記事タイトル: ${title}`,
-    needSummary ? `記事本文:\n${sourceText}` : '',
-  ].join('\n');
+// 無料枠は「1日の呼び出し回数」が少ないため、複数の記事を1回の呼び出しでまとめて要約する
+const BATCH_SIZE = Math.max(1, Number(process.env.GEMINI_BATCH_SIZE || 10));
+const BATCH_SOURCE_MAX = 3000; // まとめて送るときの1記事あたりの本文の上限（文字）
+export const isQuotaError = (msg) => /1日の利用上限/.test(String(msg || ''));
 
+function validate(job, r) {
   const out = { title: null, summary: null, titleError: null, summaryError: null };
-  let obj;
-  try {
-    obj = parseJson(await generate(prompt));
-  } catch (e) {
-    if (needTitle) out.titleError = e.message;
-    if (needSummary) out.summaryError = e.message;
-    return out;
-  }
-  if (needTitle) {
-    const t = String(obj.title || '').trim();
+  if (job.needTitle) {
+    const t = String(r?.title || '').trim();
     if (!t) out.titleError = '見出しが空でした';
     else if (len(t) > TITLE_MAX) out.titleError = `見出しが${TITLE_MAX}文字を超えました`;
     else out.title = t;
   }
-  if (needSummary) {
-    const s = String(obj.summary || '').trim();
+  if (job.needSummary) {
+    const s = String(r?.summary || '').trim();
     if (!s) out.summaryError = '要約が空でした';
     else if (len(s) > SUMMARY_MAX) out.summaryError = `要約が${SUMMARY_MAX}文字を超えました`;
     else out.summary = s;
   }
   return out;
+}
+
+/**
+ * 複数の記事の見出し（必要な場合）と概要（必要な場合）を、最大 BATCH_SIZE 件ずつまとめて要約する。
+ * jobs: [{ title, needTitle, sourceText, needSummary }]
+ * 戻り値: jobs と同じ順の [{ title, summary, titleError, summaryError }]
+ * 各項目は「空でない」「決められた文字数以内」を満たさなければ失敗扱い（2.3 失敗の定義）。
+ */
+export async function summarizeBatch(jobs) {
+  const results = new Array(jobs.length);
+  for (let start = 0; start < jobs.length; start += BATCH_SIZE) {
+    const chunk = jobs.slice(start, start + BATCH_SIZE);
+    const prompt = [
+      'あなたはニュースアプリの編集者です。次の記事それぞれについて作業し、JSONだけを返してください。',
+      '返す形：{"items":[{"id":記事番号,"title":"見出し","summary":"要約"}]}',
+      `- "title"：「見出し：必要」の記事だけ書く。元のタイトルの意味を変えずに、${TITLE_MAX - 3}文字以内の日本語の見出しにする（記号も1文字と数える。絶対に${TITLE_MAX}文字を超えない）。`,
+      `- "summary"：「要約：必要」の記事だけ書く。本文を${SUMMARY_MAX}文字以内の日本語で要約する。事実だけを書き、本文にないことは書かない。`,
+      '- 記事ごとに独立して作業し、他の記事の内容を混ぜない。',
+      '',
+      ...chunk.map((j, k) => [
+        `### 記事${k + 1}`,
+        `見出し：${j.needTitle ? '必要' : '不要'}　要約：${j.needSummary ? '必要' : '不要'}`,
+        `タイトル：${j.title}`,
+        j.needSummary ? `本文：\n${String(j.sourceText || '').slice(0, BATCH_SOURCE_MAX)}` : '',
+        '',
+      ].join('\n')),
+    ].join('\n');
+    let items = null, err = null;
+    try {
+      const obj = parseJson(await generate(prompt));
+      items = Array.isArray(obj.items) ? obj.items : [];
+    } catch (e) {
+      err = e.message;
+    }
+    chunk.forEach((j, k) => {
+      if (err) {
+        results[start + k] = { title: null, summary: null, titleError: j.needTitle ? err : null, summaryError: j.needSummary ? err : null };
+      } else {
+        results[start + k] = validate(j, items.find((x) => Number(x?.id) === k + 1));
+      }
+    });
+  }
+  return results;
+}
+
+/** 1件だけ要約する（summarizeBatch の1件版） */
+export async function summarize(job) {
+  return (await summarizeBatch([job]))[0];
 }
