@@ -307,7 +307,7 @@ async function lastCollection(userId = null) {
   return rows[0]?.completed_at || null;
 }
 // 画像がない記事のタイル色（サイトごとに固定。白文字が読める濃さ）
-const TILE_COLORS = ['#2E4A4A', '#3D3A5C', '#5A3B3B', '#2F4858', '#4B3F63', '#3B5A44'];
+const TILE_COLORS = ['#3a3a3c', '#1f3a5f', '#4a3f5c', '#2c4a52', '#5a4632', '#3d4a3a'];
 function tileColor(site) {
   let n = 0;
   for (const ch of String(site || '')) n = (n * 31 + ch.codePointAt(0)) >>> 0;
@@ -398,7 +398,7 @@ app.get('/mypage', needUser, async (req, res) => {
         <form method="post" action="/mypage/password" style="margin:0"><button class="linkbtn" type="submit">パスワードを変更する</button></form></div>
       <div class="row" style="border-bottom:none"><div><div class="meta">最新記事の取得日時</div><div>${last ? fmtJst(last) : 'まだ収集していません'}</div></div>
         <form method="post" action="/mypage/collect" style="margin:0"><button class="btn" type="submit" ${busy || !sites.length ? 'disabled' : ''}>${busy ? '読み込み中…' : '今すぐ読み込む'}</button></form></div>
-      ${busy ? `<div role="status" style="padding:0 0 8px;font-weight:700;color:#0B5E5E">${h(etaText(run))}<span class="meta" style="font-weight:400">（この画面は20秒ごとに自動で更新されます）</span></div>
+      ${busy ? `<div role="status" style="padding:0 0 8px;font-weight:700;color:var(--accent)">${h(etaText(run))}<span class="meta" style="font-weight:400">（この画面は20秒ごとに自動で更新されます）</span></div>
         <script>setTimeout(function(){ location.replace('/mypage'); }, 20000)</script>` : ''}
       <div class="meta" style="padding:0 0 12px">「今すぐ読み込む」は、登録している収集元URLの最新記事を読み込みます（10分に1回まで。記事数によっては数分かかります）。</div>
     </section>
