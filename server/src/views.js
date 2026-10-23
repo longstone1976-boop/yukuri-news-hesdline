@@ -2,9 +2,12 @@ import { escapeHtml as h } from './text.js';
 
 const CSS = `
 :root{--ink:#1B1F24;--sub:#4A535C;--line:#DCE1E6;--accent:#0B5E5E;--dark:#0B3B3B;--bg:#F3F5F7;--err:#A1271C}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:"Zen Kaku Gothic New",system-ui,sans-serif}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:flex;flex-direction:column;background:var(--bg);color:var(--ink);font-family:"Zen Kaku Gothic New",system-ui,sans-serif}
 a{color:var(--accent)}a:hover{color:#063F3F}
 header{background:var(--dark);color:#fff}
+footer{background:var(--dark);color:#BFD9D9;font-size:13px}
+footer .wrap{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px 16px;padding:20px}
+footer nav{gap:16px}footer nav a,footer nav a:hover{color:#fff;background:none;border:none;padding:0;min-height:44px;display:inline-flex;align-items:center}
 .wrap{max-width:1040px;margin:0 auto;padding:12px 20px}
 .top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px}
 .logo{font-size:24px;font-weight:700;color:#fff;text-decoration:none}.logo small{font-size:12px;font-weight:400;margin-left:8px;color:#BFD9D9}
@@ -12,7 +15,7 @@ nav{display:flex;gap:6px;flex-wrap:wrap;align-items:center}nav a{color:#fff;bord
 nav a.on{background:#fff;color:var(--dark);font-weight:700}
 .navbtn{color:#fff;background:transparent;border:1px solid rgba(255,255,255,.4);border-radius:8px;padding:0 14px;min-height:44px;font:inherit;cursor:pointer}
 .navbtn:hover{background:rgba(255,255,255,.12)}
-main{max-width:1040px;margin:0 auto;padding:24px 20px 120px}
+main{flex:1 0 auto;width:100%;max-width:1040px;margin:0 auto;padding:24px 20px 120px}
 .card{background:#fff;border:1px solid var(--line);border-radius:12px}
 .item{padding:16px;display:flex;flex-wrap:wrap;gap:16px;margin-bottom:12px}
 .thumb{flex:1 1 180px;max-width:220px;aspect-ratio:16/10;border-radius:8px;object-fit:cover;background:#E4E7EA}
@@ -75,7 +78,8 @@ export function layout(title, { nav = 'user', active = '' } = {}, inner) {
 <link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;700&display=swap" rel="stylesheet">
 <style>${CSS}</style></head><body>
 <header><div class="wrap top"><a class="logo" href="${nav === 'admin' ? '/admin' : '/'}">ゆっくりNEWS${nav === 'admin' ? '<small>管理者</small>' : ''}</a><nav>${navHtml}</nav></div></header>
-<main>${inner}</main></body></html>`;
+<main>${inner}</main>
+<footer><div class="wrap"><span>© ゆっくりNEWS</span><nav aria-label="フッター"><a href="/terms">利用規約</a><a href="/privacy">プライバシーポリシー</a></nav></div></footer></body></html>`;
 }
 
 export const flash = (msg, bad) => (msg ? `<div class="flash ${bad ? 'bad' : ''}" role="status">${h(msg)}</div>` : '');
