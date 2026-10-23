@@ -11,7 +11,7 @@ import {
 } from './auth.js';
 
 const PORT = Number(process.env.PORT || 3000);
-const PER_PAGE = 20;
+const PER_PAGE = 21;
 const MAX_SITES = 20;           // 1ユーザーにつき最大20件（8.4）
 const SESSION_DAYS = 30;        // 最後に操作してから30日（9.3）
 const LOCK_MS = 15 * 60_000;    // 5回失敗で15分停止（9.3）
