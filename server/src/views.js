@@ -42,6 +42,20 @@ table{border-collapse:collapse;width:100%}td,th{padding:8px 10px;border-bottom:1
 .badge{display:inline-block;font-size:12px;padding:2px 8px;border-radius:999px;background:#EEF1F4;color:var(--sub)}
 .mail{border:1px dashed #9AA5AF;border-radius:12px;background:#FBFCFD;padding:20px;display:flex;flex-direction:column;gap:8px}
 .mono{font-family:ui-monospace,Menlo,Consolas,monospace;letter-spacing:.06em}
+/* ニュース一覧：Instagram風の3列グリッド */
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;max-width:935px;margin:0 auto}
+.tile{position:relative;display:block;aspect-ratio:1/1;overflow:hidden;background:var(--tile,#2E4A4A);color:#fff;text-decoration:none;border-radius:2px}
+.tile img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;transition:transform .25s ease}
+.tile:hover,.tile:visited{color:#fff}
+.tile:hover img,.tile:focus-visible img{transform:scale(1.04)}
+.tile:focus-visible{outline:3px solid #F2B84B;outline-offset:2px}
+.tile .ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:12px;text-align:center;font-weight:700;font-size:15px;line-height:1.4;color:rgba(255,255,255,.9)}
+.tile .cap{position:absolute;left:0;right:0;bottom:0;padding:28px 10px 8px;background:linear-gradient(transparent,rgba(0,0,0,.78));display:flex;flex-direction:column;gap:2px}
+.tile .t{font-size:14px;font-weight:700;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.tile .m{font-size:11px;color:rgba(255,255,255,.85);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile.noimg-tile .cap{background:none;padding-top:8px}
+.tile.noimg-tile .ph{bottom:40px}
+@media (max-width:600px){.grid{gap:2px}.tile .t{font-size:11px}.tile .m{display:none}.tile .cap{padding:20px 6px 6px}.tile .ph{font-size:12px;padding:6px}.tile.noimg-tile .ph{bottom:28px}}
 `;
 
 /** nav: 'user'（会員向け）/ 'admin'（管理者向け）/ 'none' */

@@ -306,6 +306,13 @@ async function lastCollection(userId = null) {
       ORDER BY completed_at DESC LIMIT 1`, [userId]);
   return rows[0]?.completed_at || null;
 }
+// 画像がない記事のタイル色（サイトごとに固定。白文字が読める濃さ）
+const TILE_COLORS = ['#2E4A4A', '#3D3A5C', '#5A3B3B', '#2F4858', '#4B3F63', '#3B5A44'];
+function tileColor(site) {
+  let n = 0;
+  for (const ch of String(site || '')) n = (n * 31 + ch.codePointAt(0)) >>> 0;
+  return TILE_COLORS[n % TILE_COLORS.length];
+}
 const thumbHtml = (url) => url
   ? `<img class="thumb" src="${h(url)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.outerHTML='<div class=&quot;noimg&quot;>No Image</div>'">`
   : '<div class="noimg">No Image</div>';
@@ -325,12 +332,19 @@ app.get('/', needUser, async (req, res) => {
     <div class="meta" style="font-size:14px">${page}/${total}ページ　／　最新記事の取得：${last ? fmtJst(last) : 'まだ収集していません'}</div></div>`;
   if (!siteCount) inner += `<div class="card" style="padding:24px;display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between"><span>MYページで収集元のURLを登録してください</span><a class="btn" href="/mypage">MYページへ</a></div>`;
   else if (!n) inner += `<div class="card" style="padding:24px">次の収集（6:00／11:55／16:00）から記事が表示されます</div>`;
-  inner += rows.map((a) => {
-    const short = len(a.summary) > 80 ? [...a.summary].slice(0, 79).join('') + '…' : a.summary;
-    return `<article class="card item">${thumbHtml(a.thumbnail_url)}<div class="body">
-      <div class="meta">${h(a.site || '')}　${fmtJst(a.posted_at)}</div><h2>${h(a.title)}</h2>
-      <p style="margin:0 0 8px;font-size:14px">${h(short)}</p><a class="btn2" href="/articles/${a.article_id}?from=${page}">詳細</a></div></article>`;
-  }).join('');
+  // Instagram風：正方形のタイルを3列に並べる。タイルを押すと記事詳細へ
+  if (rows.length) {
+    inner += `<div class="grid">${rows.map((a) => {
+      const meta = `${a.site || ''}・${fmtJst(a.posted_at)}`;
+      // 画像の下に代わりの表示を敷いておき、画像が読めなければ画像だけを消す
+      const ph = `<div class="ph">${h(a.site || 'No Image')}</div>`;
+      const media = ph + (a.thumbnail_url
+        ? `<img src="${h(a.thumbnail_url)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.classList.add('noimg-tile');this.remove()">`
+        : '');
+      return `<a class="tile${a.thumbnail_url ? '' : ' noimg-tile'}" style="--tile:${tileColor(a.site)}" href="/articles/${a.article_id}?from=${page}" aria-label="${h(a.title)}（${h(meta)}）">
+        ${media}<div class="cap"><span class="t">${h(a.title)}</span><span class="m">${h(meta)}</span></div></a>`;
+    }).join('')}</div>`;
+  }
   if (n) {
     inner += `<div class="pager">${page > 1 ? `<a class="btn prev" href="/?page=${page - 1}">戻る</a>` : '<span class="btn prev">戻る</span>'}
       ${page < total ? `<a class="btn next" href="/?page=${page + 1}">進む</a>` : '<span class="btn next">進む</span>'}</div>`;
