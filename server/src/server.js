@@ -378,8 +378,18 @@ app.get('/mypage', needUser, async (req, res) => {
     `SELECT s.site_id, s.name, s.feed_url, us.registered_at FROM user_sites us JOIN sites s USING (site_id)
       WHERE us.user_id=$1 ORDER BY us.registered_at DESC`, [u.user_id]);
   const last = await lastCollection(u.user_id);
-  const busy = userRuns.has(u.user_id);
-  res.send(layout('MYページ', { active: 'mypage' }, `${msgOf(req)}<div class="mid">
+  const run = userRuns.get(u.user_id);
+  const busy = !!run;
+  // 読み込みが終わってから10分以内なら、結果を1回だけ知らせる
+  let doneMsg = '';
+  const done = userDone.get(u.user_id);
+  if (!busy && done && Date.now() - done.at < 10 * 60_000) {
+    userDone.delete(u.user_id);
+    doneMsg = done.failed ? flash('読み込みに失敗しました。時間をおいて再度お試しください', true)
+      : done.skipped ? flash('全体の収集と重なったため、今回の読み込みは行われませんでした。全体の収集が終わると一覧に反映されます')
+        : flash(`読み込みが完了しました（${hhmm(done.at)}）。新しい記事 ${done.added}件、Newsの一覧 ${done.listed}件`);
+  }
+  res.send(layout('MYページ', { active: 'mypage' }, `${msgOf(req)}${doneMsg}<div class="mid">
     <h1 style="margin:0">MYページ</h1>
     <section class="card" style="padding:4px 20px">
       <div class="row"><div><div class="meta">メールアドレス</div><div>${h(u.email)}</div></div><a class="btn2" href="/mypage/email">変更</a></div>
@@ -388,6 +398,8 @@ app.get('/mypage', needUser, async (req, res) => {
         <form method="post" action="/mypage/password" style="margin:0"><button class="linkbtn" type="submit">パスワードを変更する</button></form></div>
       <div class="row" style="border-bottom:none"><div><div class="meta">最新記事の取得日時</div><div>${last ? fmtJst(last) : 'まだ収集していません'}</div></div>
         <form method="post" action="/mypage/collect" style="margin:0"><button class="btn" type="submit" ${busy || !sites.length ? 'disabled' : ''}>${busy ? '読み込み中…' : '今すぐ読み込む'}</button></form></div>
+      ${busy ? `<div role="status" style="padding:0 0 8px;font-weight:700;color:#0B5E5E">${h(etaText(run))}<span class="meta" style="font-weight:400">（この画面は20秒ごとに自動で更新されます）</span></div>
+        <script>setTimeout(function(){ location.replace('/mypage'); }, 20000)</script>` : ''}
       <div class="meta" style="padding:0 0 12px">「今すぐ読み込む」は、登録している収集元URLの最新記事を読み込みます（10分に1回まで。記事数によっては数分かかります）。</div>
     </section>
     <section class="card" style="padding:20px;display:flex;flex-direction:column;gap:12px">
@@ -411,11 +423,33 @@ app.get('/mypage', needUser, async (req, res) => {
 });
 
 // MYページの「今すぐ読み込む」：本人が登録したサイトだけを読み込み、本人の一覧だけを作り直す
-const userRuns = new Map();
+const userRuns = new Map();   // user_id → { job, startedAt, eta }
+const userDone = new Map();   // user_id → { at, added, listed, skipped }（完了したことを次にMYページを開いたときに伝える）
 const USER_RUN_INTERVAL_MIN = 10;
+const hhmm = (ms) => fmtJst(ms).slice(-5);
+
+// 完了の目安：本人の過去の「今すぐ読み込む」にかかった時間（直近5回の中央値）。記録がなければサイト数から見積もる
+async function estimateRunMs(uid, siteCount) {
+  const { rows } = await pool.query(
+    `SELECT EXTRACT(EPOCH FROM completed_at - started_at)::float AS sec FROM collections
+      WHERE user_id=$1 AND status='done' AND completed_at IS NOT NULL ORDER BY collection_id DESC LIMIT 5`, [uid]);
+  let ms;
+  if (rows.length) {
+    const secs = rows.map((r) => r.sec).sort((a, b) => a - b);
+    ms = secs[Math.floor(secs.length / 2)] * 1000 * 1.2; // 少し余裕を持たせる
+  } else {
+    ms = (30 + siteCount * 45) * 1000; // 1サイトあたり約45秒（フィード・記事ページの読み込みとGeminiの要約）
+  }
+  return Math.min(Math.max(ms, 30_000), 15 * 60_000);
+}
+function etaText(run) {
+  const left = Math.ceil((run.eta - Date.now()) / 60_000);
+  return left > 0 ? `完了の目安：${hhmm(run.eta)}ごろ（あと約${left}分）` : '完了の目安を過ぎています。まもなく完了します';
+}
+
 app.post('/mypage/collect', needUser, async (req, res) => {
   const uid = req.user.user_id;
-  if (userRuns.has(uid)) return go(res, '/mypage', '読み込み中です。しばらくしてから画面を再読み込みしてください');
+  if (userRuns.has(uid)) return go(res, '/mypage', `読み込み中です。${etaText(userRuns.get(uid))}`);
   const { rows: [{ c }] } = await pool.query('SELECT count(*)::int AS c FROM user_sites WHERE user_id=$1', [uid]);
   if (!c) return go(res, '/mypage', '先に収集元のURLを登録してください', true);
   const { rows: [recent] } = await pool.query(
@@ -426,12 +460,18 @@ app.post('/mypage/collect', needUser, async (req, res) => {
     return go(res, '/mypage', `「今すぐ読み込む」は${USER_RUN_INTERVAL_MIN}分に1回までです。あと約${wait}分お待ちください`, true);
   }
   if (running) return go(res, '/mypage', '全体の自動収集を実行中です。終わると一覧に反映されます。数分後に確認してください', true);
+  const startedAt = Date.now();
+  const eta = startedAt + await estimateRunMs(uid, c);
+  userDone.delete(uid);
   const job = runCollection({ userId: uid })
-    .then((r) => { if (r?.skipped) console.log('[collect] 別の収集が実行中のため、今すぐ読み込みをスキップしました'); })
-    .catch((e) => console.error(e))
+    .then((r) => {
+      if (r?.skipped) console.log('[collect] 別の収集が実行中のため、今すぐ読み込みをスキップしました');
+      userDone.set(uid, { at: Date.now(), added: r?.added ?? 0, listed: r?.listed ?? 0, skipped: !!r?.skipped });
+    })
+    .catch((e) => { console.error(e); userDone.set(uid, { at: Date.now(), failed: true }); })
     .finally(() => userRuns.delete(uid));
-  userRuns.set(uid, job);
-  go(res, '/mypage', '読み込みを開始しました。記事数によっては数分かかります。終わったらNewsに表示されます');
+  userRuns.set(uid, { job, startedAt, eta });
+  go(res, '/mypage', `読み込みを開始しました。${etaText({ eta })}。完了するとNewsに表示されます`);
 });
 
 app.post('/mypage/sites', needUser, async (req, res) => {
