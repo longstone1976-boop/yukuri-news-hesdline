@@ -228,7 +228,7 @@ app.get('/verify', async (req, res) => {
   await pool.query('DELETE FROM pending_registrations WHERE email=$1', [p.email]);
   console.log(`[auth] 本登録完了 ユーザーID ${user.user_id}`);
   loginUser(req, res, user);
-  go(res, '/', `登録が完了しました。ユーザーID：${user.user_id}　MYページで収集元のURLを登録すると、ニュースが表示されます。`);
+  go(res, '/', `登録が完了しました。ユーザーID：${user.user_id}　MYページで収集元のURLを登録すると、Newsに記事が表示されます。`);
 });
 
 // ===== パスワードリセット（9.4） =====
@@ -328,7 +328,7 @@ app.get('/', needUser, async (req, res) => {
       WHERE f.user_id=$1 ORDER BY f.position LIMIT $2 OFFSET $3`, [uid, PER_PAGE, (page - 1) * PER_PAGE]);
   const { rows: [{ c: siteCount }] } = await pool.query('SELECT count(*)::int AS c FROM user_sites WHERE user_id=$1', [uid]);
   const last = await lastCollection(uid);
-  let inner = `${msgOf(req)}<div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:8px"><h1>ニュース</h1>
+  let inner = `${msgOf(req)}<div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:8px"><h1>News</h1>
     <div class="meta" style="font-size:14px">${page}/${total}ページ　／　最新記事の取得：${last ? fmtJst(last) : 'まだ収集していません'}</div></div>`;
   if (!siteCount) inner += `<div class="card" style="padding:24px;display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between"><span>MYページで収集元のURLを登録してください</span><a class="btn" href="/mypage">MYページへ</a></div>`;
   else if (!n) inner += `<div class="card" style="padding:24px">次の収集（6:00／11:55／16:00）から記事が表示されます</div>`;
@@ -349,14 +349,14 @@ app.get('/', needUser, async (req, res) => {
     inner += `<div class="pager">${page > 1 ? `<a class="btn prev" href="/?page=${page - 1}">戻る</a>` : '<span class="btn prev">戻る</span>'}
       ${page < total ? `<a class="btn next" href="/?page=${page + 1}">進む</a>` : '<span class="btn next">進む</span>'}</div>`;
   }
-  res.send(layout('ニュース', { active: 'field' }, inner));
+  res.send(layout('News', { active: 'field' }, inner));
 });
 
 // 記事詳細画面（5章）
 app.get('/articles/:id', needUser, async (req, res) => {
   const { rows } = await pool.query(
     `SELECT a.*, s.name AS site FROM articles a LEFT JOIN sites s ON s.site_id=a.site_id WHERE a.article_id=$1`, [parseInt(req.params.id, 10) || 0]);
-  if (!rows.length) return res.status(404).send(layout('見つかりません', { active: 'field' }, '<p>記事が見つかりませんでした。</p><a href="/">ニュース一覧に戻る</a>'));
+  if (!rows.length) return res.status(404).send(layout('見つかりません', { active: 'field' }, '<p>記事が見つかりませんでした。</p><a href="/">Newsに戻る</a>'));
   const a = rows[0];
   const back = parseInt(req.query.from, 10) || 1;
   const badge = (st, what) => ({ pending: `<span class="badge">${what}は要約未完了（次の収集で再要約）</span> `, final: `<span class="badge">${what}は要約できなかったため代わりの内容</span> ` }[st] || '');
@@ -367,7 +367,7 @@ app.get('/articles/:id', needUser, async (req, res) => {
     <p style="font-size:16px">${h(a.summary)}</p>${badge(a.title_status, '見出し')}${badge(a.summary_status, '概要')}
     <div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:16px">
       <a class="btn" href="${h(a.url)}" target="_blank" rel="noopener noreferrer">記事参照（新しいタブで開く）</a>
-      <a class="btn2" href="/?page=${back}">ニュース一覧に戻る</a></div>
+      <a class="btn2" href="/?page=${back}">Newsに戻る</a></div>
   </article>`));
 });
 
@@ -396,7 +396,7 @@ app.get('/mypage', needUser, async (req, res) => {
         <label class="f" style="flex:999 1 260px">ニュースフィードまたはRSSのURL<input class="inp" type="url" name="url" required placeholder="https://"></label>
         <button class="btn" type="submit" style="flex:1 0 auto">追加</button></form>
       <div class="meta">追加するときにフィードを読み込めるか確認し、サイト名はフィードから取得します。記事は次の収集から表示されます。</div>
-      <form method="post" action="/mypage/sites/delete" onsubmit="return confirm('選んだURLを削除します。削除したサイトの記事は、ニュース一覧に表示されなくなります。よろしいですか？')">
+      <form method="post" action="/mypage/sites/delete" onsubmit="return confirm('選んだURLを削除します。削除したサイトの記事は、Newsに表示されなくなります。よろしいですか？')">
         <div class="scroll"><table><thead><tr><th></th><th>サイト名</th><th>URL</th><th>登録日時</th></tr></thead><tbody>
         ${sites.map((s) => `<tr><td><input type="checkbox" name="ids" value="${s.site_id}" aria-label="${h(s.name)}を選択" style="width:20px;height:20px"></td><td>${h(s.name)}</td><td style="word-break:break-all">${h(s.feed_url)}</td><td>${fmtJst(s.registered_at)}</td></tr>`).join('') || '<tr><td colspan="4">登録されているURLはありません</td></tr>'}
         </tbody></table></div>
@@ -431,7 +431,7 @@ app.post('/mypage/collect', needUser, async (req, res) => {
     .catch((e) => console.error(e))
     .finally(() => userRuns.delete(uid));
   userRuns.set(uid, job);
-  go(res, '/mypage', '読み込みを開始しました。記事数によっては数分かかります。終わったらニュース画面に表示されます');
+  go(res, '/mypage', '読み込みを開始しました。記事数によっては数分かかります。終わったらNewsに表示されます');
 });
 
 app.post('/mypage/sites', needUser, async (req, res) => {

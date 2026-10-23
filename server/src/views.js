@@ -62,7 +62,7 @@ table{border-collapse:collapse;width:100%}td,th{padding:8px 10px;border-bottom:1
 export function layout(title, { nav = 'user', active = '' } = {}, inner) {
   let navHtml = '';
   if (nav === 'user') {
-    navHtml = [['/', 'ニュース', 'field'], ['/mypage', 'MYページ', 'mypage']]
+    navHtml = [['/', 'News', 'field'], ['/mypage', 'MYページ', 'mypage']]
       .map(([href, label, key]) => `<a href="${href}" class="${active === key ? 'on' : ''}">${label}</a>`).join('')
       + '<form method="post" action="/logout" style="margin:0"><button class="navbtn" type="submit">ログアウト</button></form>';
   } else if (nav === 'admin') {
