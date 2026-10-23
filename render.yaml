@@ -24,6 +24,8 @@ services:
         value: longstone1976@gmail.com   # 管理者画面のログインID
       - key: SESSION_SECRET
         generateValue: true  # ログイン状態の署名用（Render が自動で作る）
+      - key: CRON_TOKEN
+        sync: false          # GitHub Actions の定期実行用の合言葉（20文字以上。GitHub の Secrets と同じ値）
       - key: GEMINI_MODEL
         value: gemini-3.5-flash
       - key: ENABLE_SCHEDULER

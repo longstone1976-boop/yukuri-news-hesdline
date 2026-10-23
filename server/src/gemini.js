@@ -102,7 +102,7 @@ function parseJson(text) {
  */
 export async function summarize({ title, needTitle, sourceText, needSummary }) {
   const tasks = [];
-  if (needTitle) tasks.push(`- "title": 次の記事タイトルを、意味を変えずに${TITLE_MAX}文字以内の日本語の見出しにする。`);
+  if (needTitle) tasks.push(`- "title": 次の記事タイトルを、意味を変えずに${TITLE_MAX - 3}文字以内の日本語の見出しにする（記号も1文字と数える。絶対に${TITLE_MAX}文字を超えない）。`);
   if (needSummary) tasks.push(`- "summary": 次の記事本文を、${SUMMARY_MAX}文字以内の日本語で要約する。事実だけを書き、本文にないことは書かない。`);
   const prompt = [
     'あなたはニュースアプリの編集者です。次の作業をして、JSONだけを返してください。',

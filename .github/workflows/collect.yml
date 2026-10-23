@@ -1,0 +1,40 @@
+# ゆっくりNEWS：決まった時刻に記事を収集する（仕様書 3.1）
+# Render の無料プランはアクセスがないとサーバーが止まるため、GitHub から呼び出して起こしてから収集させる。
+# 必要な設定：リポジトリの Settings > Secrets and variables > Actions に CRON_TOKEN を登録
+#             （Render の環境変数 CRON_TOKEN と同じ値）
+name: 定期収集
+
+on:
+  schedule:
+    - cron: "0 21 * * *"   # 日本時間 6:00
+    - cron: "55 2 * * *"   # 日本時間 11:55
+    - cron: "0 7 * * *"    # 日本時間 16:00
+  workflow_dispatch: {}     # Actions の画面から手動でも実行できる
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    env:
+      APP_URL: https://yukkuri-news.onrender.com
+    steps:
+      - name: サーバーを起こす（止まっていると起動に1分ほどかかる）
+        run: |
+          for i in $(seq 1 12); do
+            if curl -fsS -m 60 "$APP_URL/healthz"; then echo; echo "起動しています"; exit 0; fi
+            echo "まだ起動していません（$i 回目）。15秒待ちます"; sleep 15
+          done
+          echo "サーバーが起動しませんでした"; exit 1
+      - name: 収集を開始する
+        env:
+          CRON_TOKEN: ${{ secrets.CRON_TOKEN }}
+        run: |
+          if [ -z "$CRON_TOKEN" ]; then echo "Secrets に CRON_TOKEN が登録されていません"; exit 1; fi
+          code=$(curl -sS -m 60 -o resp.txt -w "%{http_code}" -X POST -H "Authorization: Bearer $CRON_TOKEN" "$APP_URL/cron/collect")
+          cat resp.txt; echo
+          if [ "$code" != "202" ]; then echo "収集を開始できませんでした（HTTP $code）。Render と GitHub の CRON_TOKEN が同じ値か確認してください"; exit 1; fi
+      - name: 収集が終わるまでサーバーを起こしておく
+        run: |
+          # 収集中にサーバーが止まらないよう、数分間アクセスを続ける
+          for i in $(seq 1 24); do sleep 30; curl -fsS -m 30 -o /dev/null "$APP_URL/healthz" || true; done
+          echo "完了（収集の結果は Render のログか、アプリの管理者画面で確認できます）"

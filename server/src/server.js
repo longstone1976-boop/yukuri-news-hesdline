@@ -607,6 +607,18 @@ app.get('/admin', needAdmin, async (req, res) => {
       </tbody></table></div>
     </section>`));
 });
+// GitHub Actions などの定期実行から呼ぶ収集の入口（無料プランでサーバーが止まっていても、呼ばれると起動して収集する）
+// 環境変数 CRON_TOKEN と同じ値を Authorization: Bearer で送ったときだけ動く
+const CRON_TOKEN = process.env.CRON_TOKEN || '';
+app.post('/cron/collect', (req, res) => {
+  const [type, token] = String(req.headers.authorization || '').split(' ');
+  if (!CRON_TOKEN || CRON_TOKEN.length < 20 || type !== 'Bearer' || !safeEq(token || '', CRON_TOKEN)) return res.status(404).send('not found');
+  const already = !!running;
+  startCollection();
+  console.log(`[cron] 定期実行から収集を${already ? '依頼されましたが、すでに実行中でした' : '開始しました'}`);
+  res.status(202).json({ started: !already, running: true });
+});
+
 app.post('/admin/collect', needAdmin, (_req, res) => {
   startCollection();
   go(res, '/admin', '収集を開始しました。記事数によっては数分かかります。画面を再読み込みして結果を確認してください');
